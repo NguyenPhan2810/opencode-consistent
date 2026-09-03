@@ -1,7 +1,7 @@
 {
   "name": "opencode-consistent",
-  "version": "0.2.0",
-  "description": "Freeze OpenCode's system prefix after the first turn of a session so prefix caches (vLLM, Anthropic, OpenAI) actually hit.",
+  "version": "0.3.0",
+  "description": "Freeze OpenCode's system prefix and wait for the same MCP servers so prefix caches (vLLM, Anthropic, OpenAI) actually hit.",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -10,11 +10,12 @@
   "files": [
     "index.js",
     "freeze.js",
+    "wait.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node freeze.test.js",
+    "test": "node freeze.test.js && node wait.test.js && node plugin.test.js",
     "prepublishOnly": "npm test"
   },
   "keywords": [
@@ -23,7 +24,8 @@
     "prefix-cache",
     "vllm",
     "kv-cache",
-    "prompt-cache"
+    "prompt-cache",
+    "mcp"
   ],
   "author": "Nguyen Phan <nguyen@nguyenphan.org>",
   "license": "MIT",

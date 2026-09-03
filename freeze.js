@@ -3,6 +3,7 @@ import os from "node:os"
 import path from "node:path"
 
 const MAX_SESSIONS = 32
+/** @type {Map<string, { system: string[], mcp: { connected: string[] } | null, savedAt?: number }>} */
 const snapshots = new Map()
 
 export function isEnvBearing(system) {
@@ -20,25 +21,36 @@ function fileFor(sessionID) {
   return path.join(stateDir(), `${safe}.json`)
 }
 
-export function loadDisk(sessionID) {
+function cloneRecord(rec) {
+  return {
+    system: rec.system.slice(),
+    mcp: rec.mcp && Array.isArray(rec.mcp.connected) ? { connected: rec.mcp.connected.slice() } : null,
+    savedAt: rec.savedAt,
+  }
+}
+
+export function loadRecord(sessionID) {
   if (!sessionID) return null
   try {
     const raw = fs.readFileSync(fileFor(sessionID), "utf8")
     const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed.system) && parsed.system.length > 0) return parsed.system
+    if (!Array.isArray(parsed.system) || parsed.system.length === 0) return null
+    const mcp =
+      parsed.mcp && Array.isArray(parsed.mcp.connected) ? { connected: parsed.mcp.connected.map(String) } : null
+    return { system: parsed.system.slice(), mcp, savedAt: parsed.savedAt }
   } catch {
     return null
   }
-  return null
 }
 
-export function saveDisk(sessionID, system) {
-  if (!sessionID || !Array.isArray(system)) return
+export function saveRecord(sessionID, rec) {
+  if (!sessionID || !rec || !Array.isArray(rec.system)) return
   fs.mkdirSync(stateDir(), { recursive: true })
-  fs.writeFileSync(
-    fileFor(sessionID),
-    JSON.stringify({ system: system.slice(), savedAt: Date.now() }),
-  )
+  const body = { system: rec.system.slice(), savedAt: rec.savedAt ?? Date.now() }
+  if (rec.mcp && Array.isArray(rec.mcp.connected)) {
+    body.mcp = { connected: rec.mcp.connected.slice() }
+  }
+  fs.writeFileSync(fileFor(sessionID), JSON.stringify(body))
 }
 
 export function forgetDisk(sessionID) {
@@ -50,28 +62,45 @@ export function forgetDisk(sessionID) {
   }
 }
 
-function remember(sessionID, system) {
+function remember(sessionID, rec) {
   if (snapshots.has(sessionID)) snapshots.delete(sessionID)
-  snapshots.set(sessionID, system.slice())
+  snapshots.set(sessionID, cloneRecord(rec))
   while (snapshots.size > MAX_SESSIONS) {
     const oldest = snapshots.keys().next().value
     snapshots.delete(oldest)
   }
 }
 
+export function peekRecord(sessionID) {
+  if (!sessionID) return null
+  const live = snapshots.get(sessionID)
+  if (live) return cloneRecord(live)
+  const disk = loadRecord(sessionID)
+  return disk ? cloneRecord(disk) : null
+}
+
 /** @returns {"snapshot"|"restore"|"skip"} */
 export function freezeSessionSystem(sessionID, system) {
   if (!sessionID || !Array.isArray(system) || !isEnvBearing(system)) return "skip"
-  const prev = snapshots.get(sessionID) || loadDisk(sessionID)
+  const prev = snapshots.get(sessionID) || loadRecord(sessionID)
   if (!prev) {
-    remember(sessionID, system)
-    saveDisk(sessionID, system)
+    const rec = { system: system.slice(), mcp: null, savedAt: Date.now() }
+    remember(sessionID, rec)
+    saveRecord(sessionID, rec)
     return "snapshot"
   }
   system.length = 0
-  for (const part of prev) system.push(part)
+  for (const part of prev.system) system.push(part)
   remember(sessionID, prev)
   return "restore"
+}
+
+export function setMcpConnected(sessionID, connected) {
+  const rec = snapshots.get(sessionID) || loadRecord(sessionID)
+  if (!rec) return
+  rec.mcp = { connected: [...new Set((connected ?? []).map(String))].sort() }
+  remember(sessionID, rec)
+  saveRecord(sessionID, rec)
 }
 
 export function forgetSession(sessionID) {
