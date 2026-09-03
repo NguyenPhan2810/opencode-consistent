@@ -55,7 +55,8 @@ async function readWanted(client) {
 export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
   const client = ctx.client
   let wanted = []
-  let lastWait = { sessionID: null, status: {} }
+  /** @type {Map<string, Record<string, { status: string }>>} */
+  const lastWait = new Map()
   const timeoutMs = waitMsFrom(options.mcpWaitMs)
   const intervalMs =
     options.mcpWaitIntervalMs !== undefined && Number.isFinite(Number(options.mcpWaitIntervalMs))
@@ -78,7 +79,7 @@ export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
         if (Array.isArray(required)) {
           if (required.length === 0) {
             logRaw(`wait skip session=${sessionID.slice(0, 12)} reason=no-mcp`)
-            lastWait = { sessionID, status: {} }
+            lastWait.set(sessionID, {})
             return
           }
           mode = "restore"
@@ -86,7 +87,7 @@ export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
         } else {
           if (wanted.length === 0) {
             logRaw(`wait skip session=${sessionID.slice(0, 12)} reason=no-wanted`)
-            lastWait = { sessionID, status: {} }
+            lastWait.set(sessionID, {})
             return
           }
           mode = rec ? "upgrade" : "first"
@@ -98,7 +99,7 @@ export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
           timeoutMs,
           intervalMs,
         })
-        lastWait = { sessionID, status: result.last ?? {} }
+        lastWait.set(sessionID, result.last ?? {})
         const connected = connectedNames(result.last).join(",") || "-"
         logRaw(
           `wait ${result.ok ? "ok" : "timeout"} mode=${mode} session=${sessionID.slice(0, 12)} elapsed=${result.elapsed} connected=${connected}`,
@@ -113,14 +114,18 @@ export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
       const kind = freezeSessionSystem(sessionID, system)
       if (kind === "skip") return
       const rec = peekRecord(sessionID)
-      const shouldCapture = lastWait.sessionID === sessionID && (kind === "snapshot" || rec?.mcp == null)
-      if (shouldCapture) setMcpConnected(sessionID, connectedNames(lastWait.status))
+      const waited = lastWait.get(sessionID)
+      const shouldCapture = waited !== undefined && (kind === "snapshot" || rec?.mcp == null)
+      if (shouldCapture) setMcpConnected(sessionID, connectedNames(waited))
       logSystem(kind, sessionID, system)
     },
     event: async ({ event }) => {
       const type = event?.type
       const id = event?.properties?.sessionID ?? event?.properties?.info?.id
-      if (typeof id === "string" && type === "session.deleted") forgetSession(id)
+      if (typeof id === "string" && type === "session.deleted") {
+        lastWait.delete(id)
+        forgetSession(id)
+      }
     },
   }
 }
