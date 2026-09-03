@@ -24,8 +24,10 @@ function logRaw(line) {
 }
 
 function logSystem(kind, sessionID, system) {
+  const rec = peekRecord(sessionID)
+  const date = rec?.date ?? "none"
   logRaw(
-    `${kind} session=${sessionID.slice(0, 12)} sha=${digest(system)} parts=${system.length} bytes=${system.join("\n").length}`,
+    `${kind} session=${sessionID.slice(0, 12)} date=${date.replaceAll(" ", "_")} sha=${digest(system)} parts=${system.length} bytes=${system.join("\n").length}`,
   )
 }
 

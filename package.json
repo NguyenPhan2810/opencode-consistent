@@ -1,7 +1,7 @@
 {
   "name": "opencode-consistent",
-  "version": "0.3.0",
-  "description": "Freeze OpenCode's system prefix and wait for the same MCP servers so prefix caches (vLLM, Anthropic, OpenAI) actually hit.",
+  "version": "0.4.0",
+  "description": "Pin Today's date in OpenCode sessions and wait for the same MCP servers so prefix caches actually hit.",
   "type": "module",
   "main": "./index.js",
   "exports": {

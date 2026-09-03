@@ -63,7 +63,9 @@ setTimeout(() => {
 await plugin["chat.message"]({ sessionID: "ses_live" })
 const later = { system: envB.slice() }
 await plugin["experimental.chat.system.transform"]({ sessionID: "ses_live" }, later)
-assert.equal(later.system[0], envA[0])
+assert.ok(later.system[0].includes("Wed Sep 03 2026"))
+assert.ok(later.system[0].includes("MCP=two"), "MCP prose / rest of the prompt stays live")
+assert.equal(later.system[0].includes("Thu Sep 04 2026"), false)
 
 forgetSession("ses_live")
 fs.writeFileSync(
@@ -85,7 +87,8 @@ await upgrade.config({
 await upgrade["chat.message"]({ sessionID: "ses_old" })
 const oldOut = { system: envB.slice() }
 await upgrade["experimental.chat.system.transform"]({ sessionID: "ses_old" }, oldOut)
-assert.equal(oldOut.system[0], envA[0])
+assert.ok(oldOut.system[0].includes("Wed Sep 03 2026"))
+assert.ok(oldOut.system[0].includes("MCP=two"))
 assert.deepEqual(peekRecord("ses_old").mcp.connected, ["tmux"])
 
 const title = { system: ["Name this chat"] }

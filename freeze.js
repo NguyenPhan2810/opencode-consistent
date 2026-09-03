@@ -3,13 +3,33 @@ import os from "node:os"
 import path from "node:path"
 
 const MAX_SESSIONS = 32
-/** @type {Map<string, { system: string[], mcp: { connected: string[] } | null, savedAt?: number }>} */
+/** JS Date#toDateString: "Thu Sep 03 2026" */
+export const DATE_LINE = /Today's date:\s+[A-Za-z]{3} [A-Za-z]{3} +\d{1,2} \d{4}/
+const DATE_VALUE = /Today's date:\s+([A-Za-z]{3} [A-Za-z]{3} +\d{1,2} \d{4})/
+
+/** @type {Map<string, { date: string, mcp: { connected: string[] } | null, savedAt?: number }>} */
 const snapshots = new Map()
 
+export function extractDate(system) {
+  const text = Array.isArray(system) ? system.join("\n") : typeof system === "string" ? system : ""
+  const match = text.match(DATE_VALUE)
+  return match ? match[1] : null
+}
+
+export function applyDate(system, date) {
+  if (!date || !Array.isArray(system)) return false
+  let hit = false
+  for (let i = 0; i < system.length; i++) {
+    if (DATE_LINE.test(system[i])) {
+      system[i] = system[i].replace(DATE_LINE, `Today's date: ${date}`)
+      hit = true
+    }
+  }
+  return hit
+}
+
 export function isEnvBearing(system) {
-  if (!Array.isArray(system) || system.length === 0) return false
-  const text = system.join("\n")
-  return text.includes("<env>") || text.includes("Today's date:")
+  return extractDate(system) != null
 }
 
 export function stateDir() {
@@ -23,7 +43,7 @@ function fileFor(sessionID) {
 
 function cloneRecord(rec) {
   return {
-    system: rec.system.slice(),
+    date: rec.date,
     mcp: rec.mcp && Array.isArray(rec.mcp.connected) ? { connected: rec.mcp.connected.slice() } : null,
     savedAt: rec.savedAt,
   }
@@ -34,19 +54,21 @@ export function loadRecord(sessionID) {
   try {
     const raw = fs.readFileSync(fileFor(sessionID), "utf8")
     const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed.system) || parsed.system.length === 0) return null
+    let date = typeof parsed.date === "string" ? parsed.date : null
+    if (!date && Array.isArray(parsed.system)) date = extractDate(parsed.system)
+    if (!date) return null
     const mcp =
       parsed.mcp && Array.isArray(parsed.mcp.connected) ? { connected: parsed.mcp.connected.map(String) } : null
-    return { system: parsed.system.slice(), mcp, savedAt: parsed.savedAt }
+    return { date, mcp, savedAt: parsed.savedAt }
   } catch {
     return null
   }
 }
 
 export function saveRecord(sessionID, rec) {
-  if (!sessionID || !rec || !Array.isArray(rec.system)) return
+  if (!sessionID || !rec?.date) return
   fs.mkdirSync(stateDir(), { recursive: true })
-  const body = { system: rec.system.slice(), savedAt: rec.savedAt ?? Date.now() }
+  const body = { date: rec.date, savedAt: rec.savedAt ?? Date.now() }
   if (rec.mcp && Array.isArray(rec.mcp.connected)) {
     body.mcp = { connected: rec.mcp.connected.slice() }
   }
@@ -81,16 +103,17 @@ export function peekRecord(sessionID) {
 
 /** @returns {"snapshot"|"restore"|"skip"} */
 export function freezeSessionSystem(sessionID, system) {
-  if (!sessionID || !Array.isArray(system) || !isEnvBearing(system)) return "skip"
+  if (!sessionID || !Array.isArray(system)) return "skip"
+  const date = extractDate(system)
+  if (!date) return "skip"
   const prev = snapshots.get(sessionID) || loadRecord(sessionID)
   if (!prev) {
-    const rec = { system: system.slice(), mcp: null, savedAt: Date.now() }
+    const rec = { date, mcp: null, savedAt: Date.now() }
     remember(sessionID, rec)
     saveRecord(sessionID, rec)
     return "snapshot"
   }
-  system.length = 0
-  for (const part of prev.system) system.push(part)
+  applyDate(system, prev.date)
   remember(sessionID, prev)
   return "restore"
 }
