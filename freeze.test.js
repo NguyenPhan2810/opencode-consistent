@@ -1,21 +1,39 @@
 import assert from "node:assert/strict"
-import { freezeSessionSystem, resetSnapshots } from "./freeze.js"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+import {
+  freezeSessionSystem,
+  resetSnapshots,
+  forgetSession,
+  stateDir,
+} from "./freeze.js"
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-consistent-"))
+process.env.OPENCODE_CONSISTENT_DIR = dir
+
+const envA = ["You are opencode.\n<env>\n  Today's date: Wed Sep 03 2026\n</env>\nPROBE_MARKER=AAA"]
+const envB = ["You are opencode.\n<env>\n  Today's date: Thu Sep 04 2026\n</env>\nPROBE_MARKER=BBB"]
 
 resetSnapshots()
+assert.equal(freezeSessionSystem("s1", envA.slice()), "snapshot")
+assert.equal(fs.existsSync(path.join(stateDir(), "s1.json")), true)
 
-const env = ["You are opencode.\n<env>\n  Today's date: Wed Sep 03 2026\n</env>\nAGENTS.md here"]
-const later = ["You are opencode.\n<env>\n  Today's date: Thu Sep 04 2026\n</env>\nAGENTS.md changed"]
+const live = envB.slice()
+assert.equal(freezeSessionSystem("s1", live), "restore")
+assert.equal(live[0], envA[0])
 
-assert.equal(freezeSessionSystem(undefined, env), "skip")
-assert.equal(freezeSessionSystem("s1", []), "skip")
-assert.equal(freezeSessionSystem("s1", ["Generate a title"]), "skip")
-assert.equal(freezeSessionSystem("s1", env), "snapshot")
-assert.equal(freezeSessionSystem("s1", later), "restore")
-assert.equal(later[0], env[0])
-assert.equal(later.length, 1)
+resetSnapshots()
+const afterRestart = envB.slice()
+assert.equal(freezeSessionSystem("s1", afterRestart), "restore", "disk snapshot survives process restart")
+assert.equal(afterRestart[0], envA[0])
+assert.ok(afterRestart[0].includes("AAA"))
+assert.equal(afterRestart[0].includes("BBB"), false)
 
-const other = ["<env>\n  Today's date: Wed Sep 03 2026\n</env>\nother project"]
-assert.equal(freezeSessionSystem("s2", other), "snapshot")
-assert.notEqual(other[0], env[0])
+forgetSession("s1")
+assert.equal(fs.existsSync(path.join(stateDir(), "s1.json")), false)
+resetSnapshots()
+assert.equal(freezeSessionSystem("s1", envB.slice()), "snapshot")
 
+fs.rmSync(dir, { recursive: true, force: true })
 console.log("ok")
