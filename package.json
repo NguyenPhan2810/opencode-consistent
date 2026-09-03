@@ -1,0 +1,49 @@
+{
+  "name": "opencode-consistent",
+  "version": "0.1.0",
+  "description": "Freeze OpenCode's system prefix after the first turn of a session so prefix caches (vLLM, Anthropic, OpenAI) actually hit.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "freeze.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node freeze.test.js",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "prefix-cache",
+    "vllm",
+    "kv-cache",
+    "prompt-cache"
+  ],
+  "author": "Nguyen Phan <nguyen@nguyenphan.org>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NguyenPhan2810/opencode-consistent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NguyenPhan2810/opencode-consistent/issues"
+  },
+  "homepage": "https://github.com/NguyenPhan2810/opencode-consistent#readme",
+  "engines": {
+    "opencode": ">=1.18.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
+  }
+}
