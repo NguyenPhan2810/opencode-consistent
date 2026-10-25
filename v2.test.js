@@ -9,11 +9,13 @@ process.env.OPENCODE_CONSISTENT_LOG = "0"
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-consistent-v2-"))
 process.env.OPENCODE_CONSISTENT_DIR = dir
 
+// Real GET /api/mcp shape: { data: [{ name, status: { status } }] }
 function fakeCtx({ statuses = {}, options = {} } = {}) {
   const hooks = {}
+  const asArray = () => Object.entries(statuses).map(([name, status]) => ({ name, status }))
   return {
     options,
-    mcp: { list: async () => ({ data: statuses }) },
+    mcp: { list: async () => ({ data: asArray() }) },
     session: {
       hook: async (name, callback) => {
         hooks[name] = callback
@@ -41,7 +43,9 @@ const cleanup = await plugin.setup(ctx)
 assert.equal(typeof ctx.hooks.context, "function", "setup registers a session context hook")
 
 const first = { sessionID: "ses_v2", system: [envA, agentsA, skillsA], messages: [], tools: { ...toolsA } }
+const t0 = Date.now()
 await ctx.hooks.context(first)
+assert.ok(Date.now() - t0 < 1000, "connected MCP servers must not stall the first turn")
 const snap = loadSnapshot("ses_v2")
 assert.ok(snap, "snapshot persisted")
 assert.equal(snap.date, "Wed Sep 03 2026")

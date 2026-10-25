@@ -167,10 +167,17 @@ export default {
   async setup(ctx, options) {
     const opts = { ...(ctx?.options ?? {}), ...(options ?? {}) }
     const mode = freezeMode(opts.freeze)
+    const waitEnv = process.env.OPENCODE_CONSISTENT_MCP_WAIT_MS
+    const waitMs =
+      opts.mcpWaitMs !== undefined
+        ? waitMsFrom(opts.mcpWaitMs)
+        : waitEnv !== undefined && waitEnv !== ""
+          ? waitMsFrom()
+          : 5000
     const hook = makeContextHook(ctx, {
       mode,
       freezeTools: opts.freezeTools !== false,
-      waitMs: waitMsFrom(opts.mcpWaitMs),
+      waitMs,
       waitIntervalMs:
         opts.mcpWaitIntervalMs !== undefined && Number.isFinite(Number(opts.mcpWaitIntervalMs))
           ? Math.max(0, Number(opts.mcpWaitIntervalMs))

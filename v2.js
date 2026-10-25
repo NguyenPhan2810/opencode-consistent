@@ -141,9 +141,14 @@ export function forgetSnapshot(sessionID) {
 }
 
 // ---------------------------------------------------------------- MCP wait
+// GET /api/mcp answers [{ name, status: { status: "connected" } }].
+// Tolerate a bare string, a flat {status}, and the nested shape.
 function statusOf(value) {
   if (typeof value === "string") return value
-  return String(value?.status ?? value?.state ?? "")
+  const inner = value?.status ?? value?.state
+  if (typeof inner === "string") return inner
+  if (inner && typeof inner === "object") return String(inner.status ?? inner.state ?? "")
+  return ""
 }
 
 function settled(statuses) {
@@ -160,7 +165,7 @@ async function mcpStatus(ctx) {
       const map = {}
       for (const entry of data) {
         if (Array.isArray(entry)) map[String(entry[0])] = entry[1]
-        else if (entry?.name) map[String(entry.name)] = entry
+        else if (entry?.name) map[String(entry.name)] = entry.status ?? entry.state ?? entry
       }
       return map
     }
