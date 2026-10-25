@@ -1,7 +1,7 @@
 {
   "name": "opencode-consistent",
-  "version": "0.4.0",
-  "description": "Pin Today's date in OpenCode sessions and wait for the same MCP servers so prefix caches actually hit.",
+  "version": "0.5.0",
+  "description": "Freeze the OpenCode system prefix per session so prefix/KV caches actually hit (V1 + V2).",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -9,13 +9,14 @@
   },
   "files": [
     "index.js",
+    "v2.js",
     "freeze.js",
     "wait.js",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "test": "node freeze.test.js && node wait.test.js && node plugin.test.js",
+    "test": "node freeze.test.js && node wait.test.js && node plugin.test.js && node v2.test.js",
     "prepublishOnly": "npm test"
   },
   "keywords": [

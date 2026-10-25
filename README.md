@@ -1,5 +1,48 @@
 # opencode-consistent
 
+## OpenCode V2 (2.x) — the entry that matters now
+
+V2 removed `experimental.chat.system.transform` and **stops loading a plugin whose
+configured path is a file** (`configured plugin path must be a directory`). The old
+`file://…/index.js` entry therefore loaded nothing at all, silently, from 2.x on.
+
+This package now carries a V2 entrypoint (`v2.js`) and must be loaded by
+**directory**:
+
+```json
+{
+  "plugins": ["file:///home/nguyen/dev/opencode-consistent"]
+}
+```
+
+It registers `ctx.session.hook("context")` and rewrites `event.system` (the
+assembled SystemPart[] for the outgoing call) so the head of the prompt is
+byte-identical to the session's first turn. Snapshot is one JSON per session under
+`~/.local/state/opencode/consistent/`, so a resumed session — even across an
+OpenCode service restart — keeps the head it was stored under.
+
+Options (plugin object form or env):
+
+| Option | Default | Meaning |
+|---|---|---|
+| `freeze` | `all` | `all` = env + AGENTS + skills + MCP prose frozen; `date` = old behaviour, only `Today's date` pinned |
+| `freezeTools` | `true` | drop tools that appear *after* the snapshot (a late MCP connect would otherwise move the tool block, which sits ahead of the conversation) |
+| `mcpWaitMs` | `5000` | wait for MCP servers to settle before the first snapshot (only the first turn) |
+
+Env fallbacks: `OPENCODE_CONSISTENT_FREEZE`, `OPENCODE_CONSISTENT_MCP_WAIT_MS`.
+
+Trade-off, stated plainly: with `freeze=all`, editing `AGENTS.md` or installing a
+skill mid-session does not reach that session; the next session gets it. That is
+the price of a stable prefix, and it is the same choice upstream made in #48777
+(they freeze env/instructions/MCP per session).
+
+Every turn writes one line to `~/.local/state/opencode/opencode-consistent.log`
+with the system digest and a per-part diff (`env`, `agents`, `skills`, `mcp`,
+`other`), plus `tools_added` / `tools_dropped`. When a cache miss happens, that
+line names the component that moved instead of leaving it to forensics.
+
+## V1 (1.18.x)
+
 OpenCode rebuilds the system prompt on every turn. In 1.18.27 the `<env>` block is cwd, worktree, git yes/no, platform, and `Today's date: ${new Date().toDateString()}`. Prefix caches hash from token 0, so when the calendar rolls the whole session misses.
 
 AGENTS.md, MCP instructions, and the skill list are re-read from disk. If you did not edit them, a restart already sends the same bytes. This plugin does **not** freeze those, so a mid-session edit still reaches the model (and correctly misses the old prefix).
@@ -55,11 +98,23 @@ Tool JSON schemas. The plugin cannot inject a missing MCP tool. If a server is s
 
 ## Debug
 
+Logging is **on by default**. Writes `~/.local/state/opencode/opencode-consistent.log` with `wait ok|timeout` and each `snapshot` / `restore`.
+
+Each system-transform line has:
+
+- `sha=` current full system digest (12 hex)
+- `snap=` first-turn digest for this `sessionID` (pinned on disk)
+- `prev=` previous turn
+- `vs_snap=` / `vs_last=` which buckets moved (`env`, `agents`, `skills`, `mcp`, `other`)
+- per-bucket digests: `env=` `agents=` `skills=` `mcp=` `other=` (`-` if that bucket was empty)
+
+`sha` is allowed to move when AGENTS.md, skills, or MCP prose change; the date field stays pinned. `vs_snap=mcp` on an overnight resume means the MCP instruction block changed, not the calendar.
+
 ```bash
-OPENCODE_CONSISTENT_LOG=1 opencode
+OPENCODE_CONSISTENT_LOG=0 opencode   # disable
 ```
 
-Writes `~/.local/state/opencode/opencode-consistent.log` with `wait ok|timeout` and `snapshot` / `restore date=…`. Restore keeps the first-turn date; `sha=` of the full system string is allowed to move when AGENTS.md or skills change.
+Restart OpenCode after a plugin edit. Plugins load at process start.
 
 ## License
 

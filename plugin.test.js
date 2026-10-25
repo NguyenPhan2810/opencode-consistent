@@ -2,9 +2,10 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { OpencodeConsistentPlugin } from "./index.js"
+import { OpencodeConsistentPlugin, loggingEnabled } from "./index.js"
 import { peekRecord, resetSnapshots, forgetSession } from "./freeze.js"
 
+process.env.OPENCODE_CONSISTENT_LOG = "0"
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-consistent-plugin-"))
 process.env.OPENCODE_CONSISTENT_DIR = dir
 
@@ -101,4 +102,12 @@ assert.equal(
 )
 
 fs.rmSync(dir, { recursive: true, force: true })
+
+const prevLog = process.env.OPENCODE_CONSISTENT_LOG
+delete process.env.OPENCODE_CONSISTENT_LOG
+assert.equal(loggingEnabled(), true)
+process.env.OPENCODE_CONSISTENT_LOG = "0"
+assert.equal(loggingEnabled(), false)
+process.env.OPENCODE_CONSISTENT_LOG = prevLog
+
 console.log("ok plugin")

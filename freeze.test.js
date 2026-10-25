@@ -11,6 +11,11 @@ import {
   setMcpConnected,
   loadRecord,
   extractDate,
+  classifyPart,
+  partDigests,
+  digestSystem,
+  changedPartKeys,
+  recordSystemDigest,
 } from "./freeze.js"
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-consistent-"))
@@ -63,6 +68,40 @@ assert.equal(peekRecord("legacy").mcp, null)
 const title = ["Name this chat"]
 assert.equal(freezeSessionSystem("legacy", title), "skip")
 assert.equal(title[0], "Name this chat")
+
+assert.equal(classifyPart("<env>\n  Today's date: Wed Sep 03 2026\n</env>"), "env")
+assert.equal(classifyPart("Read AGENTS.md before editing."), "agents")
+assert.equal(classifyPart("<available_skills>\n- foo\n</available_skills>"), "skills")
+assert.equal(classifyPart("MCP server homelab-tools is available."), "mcp")
+assert.equal(classifyPart("plain identity"), "other")
+
+const mixed = [
+  "You are opencode.\n<env>\n  Today's date: Wed Sep 03 2026\n</env>",
+  "# AGENTS.md\nrules",
+  "<available_skills>x</available_skills>",
+  "MCP server tmux connected.",
+]
+const d1 = partDigests(mixed)
+const d2 = partDigests(mixed)
+assert.deepEqual(d1, d2)
+assert.notEqual(d1.env, "-")
+assert.notEqual(d1.agents, "-")
+assert.notEqual(d1.skills, "-")
+assert.notEqual(d1.mcp, "-")
+assert.equal(d1.other, "-")
+const drifted = partDigests([mixed[0], "# AGENTS.md\nrules changed", mixed[2], mixed[3]])
+assert.deepEqual(changedPartKeys(d1, drifted), ["agents"])
+assert.equal(digestSystem(mixed).length, 12)
+
+resetSnapshots()
+assert.equal(freezeSessionSystem("s2", envA.slice()), "snapshot")
+const shaA = digestSystem(envA)
+recordSystemDigest("s2", shaA, partDigests(envA), "snapshot")
+assert.equal(peekRecord("s2").sha, shaA)
+const shaB = digestSystem(envB)
+recordSystemDigest("s2", shaB, partDigests(envB), "restore")
+assert.equal(peekRecord("s2").sha, shaA, "first-turn sha stays pinned")
+assert.equal(peekRecord("s2").lastSha, shaB)
 
 fs.rmSync(dir, { recursive: true, force: true })
 console.log("ok freeze")

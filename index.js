@@ -1,20 +1,33 @@
-import { createHash } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { freezeSessionSystem, forgetSession, peekRecord, setMcpConnected } from "./freeze.js"
+import {
+  changedPartKeys,
+  digestSystem,
+  freezeSessionSystem,
+  forgetSession,
+  partDigests,
+  PART_KEYS,
+  peekRecord,
+  recordSystemDigest,
+  setMcpConnected,
+} from "./freeze.js"
 import { connectedNames, hasConnected, isSettled, waitMsFrom, waitUntil, wantedServers } from "./wait.js"
-
-function digest(system) {
-  return createHash("sha256").update(system.join("\n")).digest("hex").slice(0, 12)
-}
+import { freezeMode, makeContextHook } from "./v2.js"
 
 function logPath() {
   return path.join(os.homedir(), ".local", "state", "opencode", "opencode-consistent.log")
 }
 
+/** On by default so an overnight miss is captured. Set OPENCODE_CONSISTENT_LOG=0 to disable. */
+export function loggingEnabled() {
+  const v = process.env.OPENCODE_CONSISTENT_LOG
+  if (v === undefined || v === "") return true
+  return v === "1" || v === "true"
+}
+
 function logRaw(line) {
-  if (process.env.OPENCODE_CONSISTENT_LOG !== "1") return
+  if (!loggingEnabled()) return
   try {
     fs.mkdirSync(path.dirname(logPath()), { recursive: true })
     fs.appendFileSync(logPath(), `${new Date().toISOString()} ${line}\n`)
@@ -24,10 +37,18 @@ function logRaw(line) {
 }
 
 function logSystem(kind, sessionID, system) {
-  const rec = peekRecord(sessionID)
+  const sha = digestSystem(system)
+  const parts = partDigests(system)
+  const before = peekRecord(sessionID)
+  const rec = recordSystemDigest(sessionID, sha, parts, kind) ?? peekRecord(sessionID)
   const date = rec?.date ?? "none"
+  const snap = rec?.sha ?? sha
+  const prev = before?.lastSha ?? before?.sha ?? "-"
+  const vsSnap = kind === "snapshot" ? [] : changedPartKeys(before?.parts, parts)
+  const vsLast = kind === "snapshot" ? [] : changedPartKeys(before?.lastParts, parts)
+  const partLog = PART_KEYS.map((key) => `${key}=${parts[key]}`).join(" ")
   logRaw(
-    `${kind} session=${sessionID.slice(0, 12)} date=${date.replaceAll(" ", "_")} sha=${digest(system)} parts=${system.length} bytes=${system.join("\n").length}`,
+    `${kind} session=${sessionID.slice(0, 12)} date=${date.replaceAll(" ", "_")} sha=${sha} snap=${snap} prev=${prev} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${system.length} bytes=${system.join("\n").length} ${partLog}`,
   )
 }
 
@@ -119,7 +140,7 @@ export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
       const waited = lastWait.get(sessionID)
       const shouldCapture = waited !== undefined && (kind === "snapshot" || rec?.mcp == null)
       if (shouldCapture) setMcpConnected(sessionID, connectedNames(waited))
-      logSystem(kind, sessionID, system)
+      if (Array.isArray(system)) logSystem(kind, sessionID, system)
     },
     event: async ({ event }) => {
       const type = event?.type
@@ -132,4 +153,33 @@ export const OpencodeConsistentPlugin = async (ctx = {}, options = {}) => {
   }
 }
 
-export default OpencodeConsistentPlugin
+/**
+ * V2 entrypoint (OpenCode 2.x). V2 reads the default export's `id` and calls
+ * `setup(ctx)`; it ignores `server()`. V1 called the default export as a
+ * function, so `server` keeps the old factory reachable for 1.18.x users.
+ *
+ * Why a separate implementation: V2 removed `experimental.chat.system.transform`.
+ * The equivalent lever is `ctx.session.hook("context", event => …)`, whose
+ * `event.system` is the assembled SystemPart[] for the outgoing call. See v2.js.
+ */
+export default {
+  id: "opencode-consistent",
+  async setup(ctx, options) {
+    const opts = { ...(ctx?.options ?? {}), ...(options ?? {}) }
+    const mode = freezeMode(opts.freeze)
+    const hook = makeContextHook(ctx, {
+      mode,
+      freezeTools: opts.freezeTools !== false,
+      waitMs: waitMsFrom(opts.mcpWaitMs),
+      waitIntervalMs:
+        opts.mcpWaitIntervalMs !== undefined && Number.isFinite(Number(opts.mcpWaitIntervalMs))
+          ? Math.max(0, Number(opts.mcpWaitIntervalMs))
+          : undefined,
+      log: logRaw,
+    })
+    const registration = await ctx.session.hook("context", (event) => hook(event))
+    logRaw(`setup v2 mode=${mode} hook=session.context freezeTools=${opts.freezeTools !== false}`)
+    return () => registration?.dispose?.()
+  },
+  server: OpencodeConsistentPlugin,
+}
