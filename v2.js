@@ -235,6 +235,10 @@ export function makeContextHook(ctx, options = {}) {
         system: clone(parts),
         parts: partsNow,
         tools: toolIds(tools),
+        // The definitions, not just the ids: a tool that DISAPPEARS mid-session shrinks the
+        // array and moves the tool block, which sits ahead of the conversation. Without these
+        // the head cannot be restored; ids alone can only drop a tool that arrived late.
+        toolDefs: clone(tools),
         toolsSha,
       })
       log(
@@ -279,9 +283,21 @@ export function makeContextHook(ctx, options = {}) {
     const added = idsNow.filter((id) => !known.has(id))
     const removed = [...known].filter((id) => !(id in tools))
     let dropped = 0
+    let readded = 0
     if (freezeTools && added.length) {
       for (const id of added) delete tools[id]
       dropped = added.length
+    }
+    // A tool that went away (an MCP server disconnecting, a preset switching) shrinks the
+    // array and moves the head just as an addition does. Put its stored definition back so
+    // the block stays byte-identical: a call to it now fails at the tool, which is cheaper
+    // than losing the whole conversation's prefix to a re-prefill.
+    if (freezeTools && removed.length && snap.toolDefs && typeof snap.toolDefs === "object") {
+      for (const id of removed) {
+        if (!(id in snap.toolDefs)) continue
+        tools[id] = clone(snap.toolDefs[id])
+        readded += 1
+      }
     }
 
     saveSnapshot(sessionID, {
@@ -292,7 +308,7 @@ export function makeContextHook(ctx, options = {}) {
     })
 
     log(
-      `restore v2 session=${short} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} ` +
+      `restore v2 session=${short} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} ` +
         Object.keys(partsNow)
           .map((k) => `${k}=${partsNow[k]}`)
           .join(" "),

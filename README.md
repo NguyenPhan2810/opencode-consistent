@@ -26,7 +26,7 @@ Options (plugin object form or env):
 | Option | Default | Meaning |
 |---|---|---|
 | `freeze` | `all` | `all` = env + AGENTS + skills + MCP prose frozen; `date` = old behaviour, only `Today's date` pinned |
-| `freezeTools` | `true` | drop tools that appear *after* the snapshot (a late MCP connect would otherwise move the tool block, which sits ahead of the conversation) |
+| `freezeTools` | `true` | hold the tool block still in **both** directions: a tool that appears *after* the snapshot is dropped, and one that disappears is put back from the snapshot's stored definitions. The tool block sits ahead of the conversation, so either change moves the head; a call to a tool that has gone away now fails at the tool instead of costing a full re-prefill. Snapshots made before 0.6.0 have ids only, so a removal is a no-op for them until the next session. |
 | `mcpWaitMs` | `5000` | wait for MCP servers to settle before the first snapshot (only the first turn) |
 
 Env fallbacks: `OPENCODE_CONSISTENT_FREEZE`, `OPENCODE_CONSISTENT_MCP_WAIT_MS`.

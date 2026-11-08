@@ -68,6 +68,18 @@ assert.ok(restoredText.includes("build the thing"), "agents block frozen")
 assert.equal("late_tool" in second.tools, false, "tool that arrived after the snapshot is dropped")
 assert.ok("read" in second.tools && "bash" in second.tools, "snapshot tools survive")
 
+// --- 1b. a tool that DISAPPEARS is put back, so the block cannot move ------
+const third = {
+  sessionID: "ses_v2",
+  system: [envB, agentsA, skillsB],
+  messages: [],
+  tools: { read: toolsA.read }, // bash went away (an MCP server or preset dropped it)
+}
+await ctx.hooks.context(third)
+assert.ok("bash" in third.tools, "a tool that went away is restored from the snapshot")
+assert.deepEqual(third.tools.bash, toolsA.bash, "restored definition is byte-identical")
+assert.equal(Object.keys(third.tools).sort().join(","), "bash,read", "the tool block is exactly the snapshot's")
+
 // --- 2. a fresh process (service restart) still restores from disk ---------
 const ctx2 = fakeCtx({ statuses: { tmux: { status: "connected" } } })
 await plugin.setup(ctx2)
