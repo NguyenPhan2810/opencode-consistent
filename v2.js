@@ -308,7 +308,7 @@ export function makeContextHook(ctx, options = {}) {
     })
 
     log(
-      `restore v2 session=${short} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} ` +
+      `restore v2 session=${short} keys=${Object.keys(event ?? {}).join(",")} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} ` +
         Object.keys(partsNow)
           .map((k) => `${k}=${partsNow[k]}`)
           .join(" "),
@@ -323,6 +323,56 @@ export function makeContextHook(ctx, options = {}) {
     } catch (err) {
       try {
         log(`error session=${String(event?.sessionID ?? "?").slice(0, 12)} ${err?.message ?? err}`)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
+ * The compaction hook: the one event the context hook never sees.
+ *
+ * OpenCode builds a compaction request by RE-RENDERING the conversation as a transcript (each
+ * exchange squeezed to a detail level until it fits) and sending it with `tools: []`, so it shares
+ * no prefix with the live session and the engine recomputes the whole conversation (measured: a
+ * 579,597-token prompt resumed at 0). The event carries the same fields the context hook gets
+ * (`sessionID, model, system, messages, options, agent, tools`) and OpenCode's own providers mutate
+ * it in place, so a plugin can put the real conversation and the real tool block back.
+ *
+ * Diagnostic by default: it logs what the event holds and changes nothing. `rewriteCompaction`
+ * turns the rewrite on for one session at a time while it is being verified.
+ */
+export function makeCompactionHook(ctx, options = {}) {
+  const log = typeof options.log === "function" ? options.log : () => {}
+  const rewrite = options.rewriteCompaction === true
+
+  return async function compactionHook(event) {
+    const short = String(event?.sessionID ?? "?").slice(0, 12)
+    try {
+      const tools = event?.tools && typeof event.tools === "object" ? event.tools : null
+      const msgs = Array.isArray(event?.messages) ? event.messages : null
+      const text = (m) => (typeof m === "string" ? m : Array.isArray(m?.content) ? m.content.map((c) => c?.text ?? "").join("") : "")
+      const sizes = msgs ? msgs.map((m) => text(m).length) : []
+      log(
+        `compaction session=${short} keys=${Object.keys(event ?? {}).join(",")} ` +
+          `tools=${tools ? Object.keys(tools).length : "none"} messages=${msgs ? msgs.length : "none"} ` +
+          `chars=${msgs ? sizes.reduce((a, b) => a + b, 0) : 0} ` +
+          `roles=${msgs ? msgs.map((m) => String(m?.role ?? "?")).join("").slice(0, 40) : "-"}`,
+      )
+      if (!rewrite || !msgs) return
+      const snap = loadSnapshot(event.sessionID)
+      if (!snap) return log(`compaction session=${short} rewrite skipped: no snapshot`)
+      const real = Array.isArray(snap.compactionMessages) ? snap.compactionMessages : null
+      if (!real) return log(`compaction session=${short} rewrite skipped: no stored conversation`)
+      const instruction = msgs[msgs.length - 1] ?? null
+      if (!instruction) return log(`compaction session=${short} rewrite skipped: no instruction`)
+      event.messages = [...real, instruction]
+      if (options.freezeTools !== false && snap.toolDefs) event.tools = clone(snap.toolDefs)
+      log(`compaction session=${short} rewritten messages=${real.length}+1 tools=${Object.keys(event.tools ?? {}).length}`)
+    } catch (err) {
+      try {
+        log(`compaction error session=${short} ${err?.message ?? err}`)
       } catch {
         /* ignore */
       }

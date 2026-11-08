@@ -13,7 +13,7 @@ import {
   setMcpConnected,
 } from "./freeze.js"
 import { connectedNames, hasConnected, isSettled, waitMsFrom, waitUntil, wantedServers } from "./wait.js"
-import { freezeMode, makeContextHook } from "./v2.js"
+import { freezeMode, makeContextHook, makeCompactionHook } from "./v2.js"
 
 function logPath() {
   return path.join(os.homedir(), ".local", "state", "opencode", "opencode-consistent.log")
@@ -185,8 +185,21 @@ export default {
       log: logRaw,
     })
     const registration = await ctx.session.hook("context", (event) => hook(event))
-    logRaw(`setup v2 mode=${mode} hook=session.context freezeTools=${opts.freezeTools !== false}`)
-    return () => registration?.dispose?.()
+    // The compaction request is assembled separately and never reaches the context hook; this is the
+    // only seam that sees it. Diagnostic until rewriteCompaction is switched on.
+    const chook = makeCompactionHook(ctx, {
+      freezeTools: opts.freezeTools !== false,
+      rewriteCompaction: opts.rewriteCompaction === true,
+      log: logRaw,
+    })
+    const compactionRegistration = await ctx.session.hook("compaction", (event) => chook(event))
+    logRaw(
+      `setup v2 mode=${mode} hook=session.context+session.compaction freezeTools=${opts.freezeTools !== false} rewriteCompaction=${opts.rewriteCompaction === true}`,
+    )
+    return () => {
+      registration?.dispose?.()
+      compactionRegistration?.dispose?.()
+    }
   },
   server: OpencodeConsistentPlugin,
 }
