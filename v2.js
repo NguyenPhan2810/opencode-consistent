@@ -365,7 +365,9 @@ export function makeContextHook(ctx, options = {}) {
  */
 export function makeCompactionHook(ctx, options = {}) {
   const log = typeof options.log === "function" ? options.log : () => {}
-  const rewrite = options.rewriteCompaction === true
+  // Verified against a real compaction the moment it can be: on, and reversible by setting
+  // rewriteCompaction: false. It only acts when a stored conversation exists.
+  const rewrite = options.rewriteCompaction !== false
 
   return async function compactionHook(event) {
     const short = String(event?.sessionID ?? "?").slice(0, 12)
@@ -387,6 +389,14 @@ export function makeCompactionHook(ctx, options = {}) {
       if (!real) return log(`compaction session=${short} rewrite skipped: no stored conversation`)
       const instruction = msgs[msgs.length - 1] ?? null
       if (!instruction) return log(`compaction session=${short} rewrite skipped: no instruction`)
+      // Only when the harness actually squeezed: a session that fits the window is sent whole and
+      // already matches the prefix (measured 2026-11-08: 50,061 tokens, 49,152 resumed). Replacing a
+      // faithful transcript with our stored copy would only add the risk of a stale tail.
+      const storedChars = JSON.stringify(real).length
+      const nowChars = msgs.reduce((n, m) => n + text(m).length, 0)
+      if (nowChars * 100 >= storedChars * 80) {
+        return log(`compaction session=${short} left as sent: not squeezed (now=${nowChars} stored=${storedChars})`)
+      }
       event.messages = [...real, instruction]
       if (options.freezeTools !== false && snap.toolDefs) event.tools = clone(snap.toolDefs)
       log(`compaction session=${short} rewritten messages=${real.length}+1 tools=${Object.keys(event.tools ?? {}).length}`)
