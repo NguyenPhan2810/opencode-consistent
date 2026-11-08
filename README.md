@@ -29,6 +29,25 @@ Options (plugin object form or env):
 | `freezeTools` | `true` | hold the tool block still in **both** directions: a tool that appears *after* the snapshot is dropped, and one that disappears is put back from the snapshot's stored definitions. The tool block sits ahead of the conversation, so either change moves the head; a call to a tool that has gone away now fails at the tool instead of costing a full re-prefill. Snapshots made before 0.6.0 have ids only, so a removal is a no-op for them until the next session. |
 | `mcpWaitMs` | `5000` | wait for MCP servers to settle before the first snapshot (only the first turn) |
 
+### Compaction
+
+A compaction request is assembled separately: the conversation is **re-rendered** as a transcript
+(each exchange squeezed to a detail level until it fits) and sent with `tools: []`. It therefore
+shares no prefix with the live session — measured on the serving pair as a 579,597-token prompt
+resuming at 0 — and the engine recomputes the whole conversation to write a summary.
+
+The plugin registers `session.hook("compaction", …)` too (the context hook never fires for one) and
+keeps the conversation it sees each turn (`snap.compactionMessages`, capped by `compactionMaxMb`,
+default 16 MB; above the cap nothing is kept and a compaction stays as cold as before). With
+`rewriteCompaction: true` it replaces the re-rendered transcript with **the real messages plus the
+harness's trailing instruction** and restores the tool block, so the request matches the session's
+prefix and only the summary is decoded.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `compactionMaxMb` | `16` | Cap on the conversation kept per session; past it, no capture and no rewrite. |
+| `rewriteCompaction` | `false` | Off until verified against a real compaction: it logs `compaction session=… tools/messages/chars/roles` either way. |
+
 Env fallbacks: `OPENCODE_CONSISTENT_FREEZE`, `OPENCODE_CONSISTENT_MCP_WAIT_MS`.
 
 Trade-off, stated plainly: with `freeze=all`, editing `AGENTS.md` or installing a

@@ -51,6 +51,21 @@ assert.ok(snap, "snapshot persisted")
 assert.equal(snap.date, "Wed Sep 03 2026")
 assert.equal(snap.system.length, 3)
 assert.deepEqual(snap.tools, ["bash", "read"])
+// the conversation a compaction request would need comes from here
+const withTurns = {
+  sessionID: "ses_v2",
+  system: [envB, agentsA, skillsB],
+  messages: [
+    { role: "user", content: [{ type: "text", text: "make a RingBuffer" }] },
+    { role: "assistant", content: [{ type: "text", text: "here it is" }] },
+  ],
+  tools: { ...toolsA },
+}
+await ctx.hooks.context(withTurns)
+const snapTurns = loadSnapshot("ses_v2")
+assert.ok(Array.isArray(snapTurns.compactionMessages), "the conversation is kept for a compaction rewrite")
+assert.equal(snapTurns.compactionMessages.length, 2, "both turns stored")
+assert.equal(snapTurns.compactionChars > 0, true, "its size is recorded")
 
 // second call: new date, new skill, an MCP tool that connected late
 const second = {
@@ -118,7 +133,27 @@ await plugin.setup(ctxWait)
 await ctxWait.hooks.context({ sessionID: "ses_wait", system: [envA], messages: [], tools: {} })
 assert.ok(loadSnapshot("ses_wait"), "waited, then snapshotted")
 
-// --- 6. cleanup disposes the registration --------------------------------
+// --- 6. a compaction request is rebuilt from the real conversation ---------
+const { makeCompactionHook } = await import("./v2.js")
+let logged = ""
+const compact = makeCompactionHook(ctx, { rewriteCompaction: true, log: (line) => (logged = line) })
+const instruction = { role: "user", content: [{ type: "text", text: "summarize the conversation above" }] }
+const compactionEvent = {
+  sessionID: "ses_v2",
+  system: [envB],
+  messages: [
+    { role: "user", content: [{ type: "text", text: "## User\nSummary of older exchanges (omitted)" }] },
+    instruction,
+  ],
+  tools: {}, // OpenCode sends tools: [] — the whole reason the prefix is lost
+}
+await compact(compactionEvent)
+assert.ok(compactionEvent.messages.length > 2, "the real history replaced the rendered transcript")
+assert.deepEqual(compactionEvent.messages[compactionEvent.messages.length - 1], instruction, "the harness instruction stays last")
+assert.equal(Object.keys(compactionEvent.tools).sort().join(","), "bash,read", "the tool block is restored")
+assert.match(logged, /rewritten/, logged)
+
+// --- 7. cleanup disposes the registration --------------------------------
 await cleanup()
 assert.equal(ctx.hooks.context, undefined, "cleanup disposes the hook")
 

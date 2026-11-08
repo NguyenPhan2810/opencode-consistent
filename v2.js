@@ -203,6 +203,13 @@ export async function waitForMcp(ctx, { timeoutMs = 5000, intervalMs = 150, slee
 export function makeContextHook(ctx, options = {}) {
   const mode = options.mode === "date" ? "date" : "all"
   const freezeTools = options.freezeTools !== false
+  // The conversation is kept so a compaction request can be rebuilt from the real history
+  // instead of the re-rendered transcript. Capped: one turn of a 1M-token session is a few MB,
+  // and past the cap the rewrite simply is not offered (a compaction stays cold, no worse).
+  const maxChars =
+    Number.isFinite(options.compactionMaxMb) && options.compactionMaxMb > 0
+      ? options.compactionMaxMb * 1024 * 1024
+      : 16 * 1024 * 1024
   const waitMs = Number.isFinite(options.waitMs) ? options.waitMs : 5000
   const waitIntervalMs = Number.isFinite(options.waitIntervalMs) ? options.waitIntervalMs : 150
   const log = typeof options.log === "function" ? options.log : () => {}
@@ -300,15 +307,28 @@ export function makeContextHook(ctx, options = {}) {
       }
     }
 
+    // Keep the conversation this turn carried: a compaction request is built from a re-rendered
+    // transcript, so the real history has to come from here. Skipped above the cap.
+    const msgs = Array.isArray(event.messages) ? event.messages : null
+    let msgsChars = 0
+    let compactionMessages = snap.compactionMessages ?? null
+    if (msgs && msgs.length) {
+      msgsChars = JSON.stringify(msgs).length
+      if (msgsChars <= maxChars) compactionMessages = clone(msgs)
+      else compactionMessages = null
+    }
+
     saveSnapshot(sessionID, {
       ...snap,
       lastSha: sha,
       lastParts: partsNow,
+      compactionMessages,
+      compactionChars: msgsChars,
       restoredAt: Date.now(),
     })
 
     log(
-      `restore v2 session=${short} keys=${Object.keys(event ?? {}).join(",")} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} ` +
+      `restore v2 session=${short} keys=${Object.keys(event ?? {}).join(",")} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} msgs=${msgs ? msgs.length : 0} msgs_chars=${msgsChars} kept=${compactionMessages ? 1 : 0} ` +
         Object.keys(partsNow)
           .map((k) => `${k}=${partsNow[k]}`)
           .join(" "),
