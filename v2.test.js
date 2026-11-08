@@ -57,7 +57,7 @@ const withTurns = {
   system: [envB, agentsA, skillsB],
   messages: [
     { role: "user", content: [{ type: "text", text: "make a RingBuffer" }] },
-    { role: "assistant", content: [{ type: "text", text: "here it is" }] },
+    { role: "assistant", content: [{ type: "text", text: "here it is " + "detail ".repeat(400) }] },
   ],
   tools: { ...toolsA },
 }
@@ -148,10 +148,11 @@ const compactionEvent = {
   tools: {}, // OpenCode sends tools: [] — the whole reason the prefix is lost
 }
 await compact(compactionEvent)
-assert.ok(compactionEvent.messages.length > 2, "the real history replaced the rendered transcript")
-assert.deepEqual(compactionEvent.messages[compactionEvent.messages.length - 1], instruction, "the harness instruction stays last")
+assert.equal(compactionEvent.messages.length, 2, "the real conversation replaced the rendered transcript")
+assert.ok(JSON.stringify(compactionEvent.messages).includes("detail detail"), "the stored content is what goes out")
+assert.equal(JSON.stringify(compactionEvent.messages).includes("summarize the conversation above"), false, "no instruction is appended: the harness adds its own")
 assert.equal(Object.keys(compactionEvent.tools).sort().join(","), "bash,read", "the tool block is restored")
-assert.match(logged, /rewritten/, logged)
+assert.match(logged, /rewritten messages=2/, logged)
 
 // --- 7. cleanup disposes the registration --------------------------------
 await cleanup()

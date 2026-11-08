@@ -407,27 +407,15 @@ export function makeCompactionHook(ctx, options = {}) {
         }
       }
       if (!real) return log(`compaction session=${short} rewrite skipped: no conversation available`)
-      // The summarisation instruction is a message of its own, not necessarily the last element
-      // (the transcript can end on a tool result). Find it by its own words and keep it verbatim:
-      // the harness validates the reply against the template that instruction demands.
-      const isInstruction = (m) => {
-        const t = text(m).toLowerCase()
-        return t.includes("summarize the conversation above") || t.includes("summarise the conversation above") || t.includes("update the existing checkpoint")
-      }
-      const instruction = [...msgs].reverse().find(isInstruction) ?? null
-      if (!instruction) return log(`compaction session=${short} rewrite skipped: no instruction message found`)
-      log(`compaction session=${short} instruction chars=${text(instruction).length}`)
-      // Only when the harness actually squeezed: a session that fits the window is sent whole and
-      // already matches the prefix (measured 2026-11-08: 50,061 tokens, 49,152 resumed). Replacing a
-      // faithful transcript with our stored copy would only add the risk of a stale tail.
-      const storedChars = JSON.stringify(real).length
-      const nowChars = msgs.reduce((n, m) => n + text(m).length, 0)
-      if (nowChars * 100 >= storedChars * 80) {
-        return log(`compaction session=${short} left as sent: not squeezed (now=${nowChars} stored=${storedChars})`)
-      }
-      event.messages = [...real, instruction]
+      // The instruction is NOT part of this event: OpenCode appends it to the messages AFTER the
+      // hook (messages: [...le, wa.user(instruction)]). So substitute the real conversation and
+      // append nothing — the harness adds its own instruction, which is what its reply validation
+      // expects, and the prefix then matches the session's own tokens.
+      const looksRendered = msgs.some((m) => text(m).includes("## User") || text(m).includes("## Assistant"))
+      log(`compaction session=${short} rendered=${looksRendered ? 1 : 0} real=${real.length} event=${msgs.length}`)
+      event.messages = real
       if (options.freezeTools !== false && snap.toolDefs) event.tools = clone(snap.toolDefs)
-      log(`compaction session=${short} rewritten messages=${real.length}+1 tools=${Object.keys(event.tools ?? {}).length}`)
+      log(`compaction session=${short} rewritten messages=${real.length} tools=${Object.keys(event.tools ?? {}).length}`)
     } catch (err) {
       try {
         log(`compaction error session=${short} ${err?.message ?? err}`)
