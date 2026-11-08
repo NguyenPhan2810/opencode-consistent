@@ -385,8 +385,23 @@ export function makeCompactionHook(ctx, options = {}) {
       if (!rewrite || !msgs) return
       const snap = loadSnapshot(event.sessionID)
       if (!snap) return log(`compaction session=${short} rewrite skipped: no snapshot`)
-      const real = Array.isArray(snap.compactionMessages) ? snap.compactionMessages : null
-      if (!real) return log(`compaction session=${short} rewrite skipped: no stored conversation`)
+      let real = Array.isArray(snap.compactionMessages) ? snap.compactionMessages : null
+      if (!real) {
+        // A session that has not taken a turn in this process (a fresh fork, a resume) has nothing
+        // captured yet. Ask the server for its context instead of giving up: the conversation is
+        // there, it just never passed through the context hook.
+        try {
+          const out = await ctx?.session?.context?.({ sessionID: event.sessionID })
+          const c = out?.data ?? out
+          if (Array.isArray(c?.messages) && c.messages.length) {
+            real = c.messages
+            log(`compaction session=${short} context fetched from the server messages=${real.length}`)
+          }
+        } catch (err) {
+          log(`compaction session=${short} context fetch failed ${err?.message ?? err}`)
+        }
+      }
+      if (!real) return log(`compaction session=${short} rewrite skipped: no conversation available`)
       // The summarisation instruction is a message of its own, not necessarily the last element
       // (the transcript can end on a tool result). Find it by its own words and keep it verbatim:
       // the harness validates the reply against the template that instruction demands.
