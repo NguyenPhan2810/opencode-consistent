@@ -392,10 +392,15 @@ export function makeCompactionHook(ctx, options = {}) {
         // there, it just never passed through the context hook.
         try {
           const out = await ctx?.session?.context?.({ sessionID: event.sessionID })
+          // GET /api/session/{id}/context answers { data: Message.Info[] } — an array, not
+          // { messages }. Tolerate both, and any wrapper the SDK adds.
           const c = out?.data ?? out
-          if (Array.isArray(c?.messages) && c.messages.length) {
-            real = c.messages
+          const list = Array.isArray(c) ? c : Array.isArray(c?.messages) ? c.messages : null
+          if (list && list.length) {
+            real = list
             log(`compaction session=${short} context fetched from the server messages=${real.length}`)
+          } else {
+            log(`compaction session=${short} context fetch returned no messages shape=${Object.keys(c ?? {}).join(",") || typeof c}`)
           }
         } catch (err) {
           log(`compaction session=${short} context fetch failed ${err?.message ?? err}`)
