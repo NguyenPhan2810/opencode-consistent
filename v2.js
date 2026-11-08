@@ -367,7 +367,7 @@ export function makeCompactionHook(ctx, options = {}) {
   const log = typeof options.log === "function" ? options.log : () => {}
   // Verified against a real compaction the moment it can be: on, and reversible by setting
   // rewriteCompaction: false. It only acts when a stored conversation exists.
-  const rewrite = options.rewriteCompaction === true
+  const rewrite = options.rewriteCompaction !== false
 
   return async function compactionHook(event) {
     const short = String(event?.sessionID ?? "?").slice(0, 12)
@@ -387,8 +387,16 @@ export function makeCompactionHook(ctx, options = {}) {
       if (!snap) return log(`compaction session=${short} rewrite skipped: no snapshot`)
       const real = Array.isArray(snap.compactionMessages) ? snap.compactionMessages : null
       if (!real) return log(`compaction session=${short} rewrite skipped: no stored conversation`)
-      const instruction = msgs[msgs.length - 1] ?? null
-      if (!instruction) return log(`compaction session=${short} rewrite skipped: no instruction`)
+      // The summarisation instruction is a message of its own, not necessarily the last element
+      // (the transcript can end on a tool result). Find it by its own words and keep it verbatim:
+      // the harness validates the reply against the template that instruction demands.
+      const isInstruction = (m) => {
+        const t = text(m).toLowerCase()
+        return t.includes("summarize the conversation above") || t.includes("summarise the conversation above") || t.includes("update the existing checkpoint")
+      }
+      const instruction = [...msgs].reverse().find(isInstruction) ?? null
+      if (!instruction) return log(`compaction session=${short} rewrite skipped: no instruction message found`)
+      log(`compaction session=${short} instruction chars=${text(instruction).length}`)
       // Only when the harness actually squeezed: a session that fits the window is sent whole and
       // already matches the prefix (measured 2026-11-08: 50,061 tokens, 49,152 resumed). Replacing a
       // faithful transcript with our stored copy would only add the risk of a stale tail.
