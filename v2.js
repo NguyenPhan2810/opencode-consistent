@@ -367,7 +367,7 @@ export function makeCompactionHook(ctx, options = {}) {
   const log = typeof options.log === "function" ? options.log : () => {}
   // Verified against a real compaction the moment it can be: on, and reversible by setting
   // rewriteCompaction: false. It only acts when a stored conversation exists.
-  const rewrite = options.rewriteCompaction !== false
+  const rewrite = options.rewriteCompaction === true
 
   return async function compactionHook(event) {
     const short = String(event?.sessionID ?? "?").slice(0, 12)

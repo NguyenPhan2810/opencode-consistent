@@ -189,12 +189,12 @@ export default {
     // only seam that sees it. Diagnostic until rewriteCompaction is switched on.
     const chook = makeCompactionHook(ctx, {
       freezeTools: opts.freezeTools !== false,
-      rewriteCompaction: opts.rewriteCompaction !== false,
+      rewriteCompaction: opts.rewriteCompaction === true,
       log: logRaw,
     })
     const compactionRegistration = await ctx.session.hook("compaction", (event) => chook(event))
     logRaw(
-      `setup v2 mode=${mode} hook=session.context+session.compaction freezeTools=${opts.freezeTools !== false} rewriteCompaction=${opts.rewriteCompaction !== false}`,
+      `setup v2 mode=${mode} hook=session.context+session.compaction freezeTools=${opts.freezeTools !== false} rewriteCompaction=${opts.rewriteCompaction === true}`,
     )
     return () => {
       registration?.dispose?.()
