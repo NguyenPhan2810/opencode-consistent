@@ -188,6 +188,7 @@ export default {
     // The compaction request is assembled separately and never reaches the context hook; this is the
     // only seam that sees it. Diagnostic until rewriteCompaction is switched on.
     const chook = makeCompactionHook(ctx, {
+      mode,
       freezeTools: opts.freezeTools !== false,
       rewriteCompaction: opts.rewriteCompaction === true,
       log: logRaw,

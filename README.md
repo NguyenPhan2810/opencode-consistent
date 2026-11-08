@@ -31,22 +31,29 @@ Options (plugin object form or env):
 
 ### Compaction
 
-A compaction request is assembled separately: the conversation is **re-rendered** as a transcript
-(each exchange squeezed to a detail level until it fits) and sent with `tools: []`. It therefore
-shares no prefix with the live session — measured on the serving pair as a 579,597-token prompt
-resuming at 0 — and the engine recomputes the whole conversation to write a summary.
+A compaction request does **not** pass through the `context` hook, so without this plugin its system
+block goes out live rather than frozen and the request rewrites the head — the engine then resumes
+only a head-sized tail (`cache.read` 0–20,480 on 400 k–800 k prompts) and prefills the rest.
 
-The plugin registers `session.hook("compaction", …)` too (the context hook never fires for one) and
-keeps the conversation it sees each turn (`snap.compactionMessages`, capped by `compactionMaxMb`,
-default 16 MB; above the cap nothing is kept and a compaction stays as cold as before). With
-`rewriteCompaction: true` it replaces the re-rendered transcript with **the real messages plus the
-harness's trailing instruction** and restores the tool block, so the request matches the session's
-prefix and only the summary is decoded.
+The plugin registers `session.hook("compaction", …)` and freezes the head there exactly as it does for
+`context`: system parts restored from the session snapshot, and the tool block held in **both**
+directions. The compaction request then shares the session's prefix, so only the instruction and the
+messages since the last turn are computed and the summary is decoded.
+
+Measured on a real manual compaction (2026-11-08, `ses_e44304e3`): `input` 3,234, `cache.read`
+137,216 — identical to the preceding normal turn (`input` 2,039, `cache.read` 137,216) — against
+579,597 → 0 before the fix. The plugin log line is `compaction session=… head restored=… mismatch=…
+tools_added=… tools_dropped=… tools_readded=…`.
+
+The conversation itself is only re-rendered upstream when it does **not** fit the model window; when
+that happens the request carries a transcript, not the messages. `rewriteCompaction` (default `false`)
+then substitutes the real messages captured from the previous turns; on an ordinary compaction it is a
+no-op, and the log's `rendered=0` shows that.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `compactionMaxMb` | `16` | Cap on the conversation kept per session; past it, no capture and no rewrite. |
-| `rewriteCompaction` | `false` | Off until verified against a real compaction: it logs `compaction session=… tools/messages/chars/roles` either way. |
+| `compactionMaxMb` | `16` | Cap on the conversation kept per session for the rewrite; past it, no capture and no rewrite. |
+| `rewriteCompaction` | `false` | Only acts when a rendered transcript appears (conversation over the window); a no-op otherwise. |
 
 Env fallbacks: `OPENCODE_CONSISTENT_FREEZE`, `OPENCODE_CONSISTENT_MCP_WAIT_MS`.
 

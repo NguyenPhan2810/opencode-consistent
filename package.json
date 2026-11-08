@@ -1,6 +1,6 @@
 {
   "name": "opencode-consistent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Freeze the OpenCode system prefix per session so prefix/KV caches actually hit (V1 + V2).",
   "type": "module",
   "main": "./index.js",

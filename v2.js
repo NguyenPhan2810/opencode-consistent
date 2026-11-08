@@ -194,6 +194,74 @@ export async function waitForMcp(ctx, { timeoutMs = 5000, intervalMs = 150, slee
   return { ok: false, elapsed: Date.now() - started, statuses }
 }
 
+// ---------------------------------------------------------------- the head
+/**
+ * Put the frozen head back on an outgoing request: the system parts (mode "all") and the tool
+ * block, in both directions. The context hook and the compaction hook share it. A compaction
+ * request is assembled from the same head as the session's own request, so freezing it there is
+ * what lets the summary reuse the session's prompt cache instead of prefilling the conversation.
+ *
+ * Mutates `event.system` and `event.tools` in place, which is what the hook event hands over.
+ */
+export function freezeHead(event, snap, options = {}) {
+  const mode = options.mode === "date" ? "date" : "all"
+  const freezeTools = options.freezeTools !== false
+  const parts = event?.system
+  let restored = 0
+  let mismatched = 0
+
+  if (Array.isArray(parts) && Array.isArray(snap?.system)) {
+    if (mode === "all") {
+      const frozen = snap.system
+      const limit = Math.min(frozen.length, parts.length)
+      for (let i = 0; i < limit; i++) {
+        if (classifyPart(partText(parts[i])) !== classifyPart(partText(frozen[i]))) {
+          mismatched += 1
+          continue
+        }
+        if (partText(parts[i]) !== partText(frozen[i])) {
+          parts[i] = clone(frozen[i])
+          restored += 1
+        }
+      }
+      // Parts the runtime dropped since the snapshot are re-added at their index;
+      // parts it added are kept and stay *after* the frozen head (tail change only).
+      if (frozen.length > parts.length) {
+        for (let i = parts.length; i < frozen.length; i++) parts.push(clone(frozen[i]))
+        restored += frozen.length - limit
+      }
+    } else if (snap.date) {
+      if (rewriteDate(parts, snap.date)) restored += 1
+    }
+  }
+
+  const tools = event?.tools && typeof event.tools === "object" ? event.tools : null
+  const idsNow = toolIds(tools)
+  const known = new Set(snap?.tools ?? [])
+  const added = idsNow.filter((id) => !known.has(id))
+  const removed = [...known].filter((id) => !(tools && id in tools))
+  let dropped = 0
+  let readded = 0
+  if (tools && freezeTools) {
+    if (added.length) {
+      for (const id of added) delete tools[id]
+      dropped = added.length
+    }
+    // A tool that went away (an MCP server disconnecting, a preset switching) shrinks the
+    // array and moves the head just as an addition does. Put its stored definition back so
+    // the block stays byte-identical: a call to it now fails at the tool, which is cheaper
+    // than losing the whole conversation's prefix to a re-prefill.
+    if (removed.length && snap.toolDefs && typeof snap.toolDefs === "object") {
+      for (const id of removed) {
+        if (!(id in snap.toolDefs)) continue
+        tools[id] = clone(snap.toolDefs[id])
+        readded += 1
+      }
+    }
+  }
+  return { restored, mismatched, known, added, removed, dropped, readded }
+}
+
 // ---------------------------------------------------------------- the hook
 /**
  * @param {object} ctx        plugin context (needs ctx.mcp.list)
@@ -259,53 +327,10 @@ export function makeContextHook(ctx, options = {}) {
 
     const vsSnap = changedPartKeys(snap.parts, partsNow)
     const vsLast = changedPartKeys(snap.lastParts ?? snap.parts, partsNow)
-    let restored = 0
-    let mismatched = 0
-
-    if (mode === "all") {
-      const frozen = Array.isArray(snap.system) ? snap.system : []
-      const limit = Math.min(frozen.length, parts.length)
-      for (let i = 0; i < limit; i++) {
-        if (classifyPart(partText(parts[i])) !== classifyPart(partText(frozen[i]))) {
-          mismatched += 1
-          continue
-        }
-        if (partText(parts[i]) !== partText(frozen[i])) {
-          parts[i] = clone(frozen[i])
-          restored += 1
-        }
-      }
-      // Parts the runtime dropped since the snapshot are re-added at their index;
-      // parts it added are kept and stay *after* the frozen head (tail change only).
-      if (frozen.length > parts.length) {
-        for (let i = parts.length; i < frozen.length; i++) parts.push(clone(frozen[i]))
-        restored += frozen.length - limit
-      }
-    } else if (snap.date) {
-      if (rewriteDate(parts, snap.date)) restored += 1
-    }
-
-    const idsNow = toolIds(tools)
-    const known = new Set(snap.tools ?? [])
-    const added = idsNow.filter((id) => !known.has(id))
-    const removed = [...known].filter((id) => !(id in tools))
-    let dropped = 0
-    let readded = 0
-    if (freezeTools && added.length) {
-      for (const id of added) delete tools[id]
-      dropped = added.length
-    }
-    // A tool that went away (an MCP server disconnecting, a preset switching) shrinks the
-    // array and moves the head just as an addition does. Put its stored definition back so
-    // the block stays byte-identical: a call to it now fails at the tool, which is cheaper
-    // than losing the whole conversation's prefix to a re-prefill.
-    if (freezeTools && removed.length && snap.toolDefs && typeof snap.toolDefs === "object") {
-      for (const id of removed) {
-        if (!(id in snap.toolDefs)) continue
-        tools[id] = clone(snap.toolDefs[id])
-        readded += 1
-      }
-    }
+    const { restored, mismatched, known, added, removed, dropped, readded } = freezeHead(event, snap, {
+      mode,
+      freezeTools,
+    })
 
     // Keep the conversation this turn carried: a compaction request is built from a re-rendered
     // transcript, so the real history has to come from here. Skipped above the cap.
@@ -353,18 +378,25 @@ export function makeContextHook(ctx, options = {}) {
 /**
  * The compaction hook: the one event the context hook never sees.
  *
- * OpenCode builds a compaction request by RE-RENDERING the conversation as a transcript (each
- * exchange squeezed to a detail level until it fits) and sending it with `tools: []`, so it shares
- * no prefix with the live session and the engine recomputes the whole conversation (measured: a
- * 579,597-token prompt resumed at 0). The event carries the same fields the context hook gets
- * (`sessionID, model, system, messages, options, agent, tools`) and OpenCode's own providers mutate
- * it in place, so a plugin can put the real conversation and the real tool block back.
+ * A compaction request is assembled from the session's own head (system + tool block) and then the
+ * conversation. When the conversation fits the model's window it is sent as the real messages plus a
+ * trailing instruction — measured on the serving pair, the request size tracks the session's prompt
+ * to within the instruction (610,665 vs 610,290 tokens), so the body is not re-rendered. What was
+ * missing is the head: the context hook never fires for a compaction, so the system block went out
+ * live instead of frozen and the prefix cache resumed at a few hundred tokens.
  *
- * Diagnostic by default: it logs what the event holds and changes nothing. `rewriteCompaction`
- * turns the rewrite on for one session at a time while it is being verified.
+ * `freezeHead` here fixes exactly that: the compaction request then shares the session's prefix and
+ * only the instruction is new. When the conversation does NOT fit, OpenCode squeezes it into a
+ * transcript (detail levels, `[N older exchanges omitted]`) and no prefix survives past the head —
+ * that one is inherent. `rewriteCompaction` additionally substitutes the real conversation when it
+ * sees a rendered one; it is a no-op on a request that was already real.
+ *
+ * Diagnostic logging is always on; the freeze itself is always applied when a snapshot exists.
  */
 export function makeCompactionHook(ctx, options = {}) {
   const log = typeof options.log === "function" ? options.log : () => {}
+  const mode = options.mode === "date" ? "date" : "all"
+  const freezeTools = options.freezeTools !== false
   // Verified against a real compaction the moment it can be: on, and reversible by setting
   // rewriteCompaction: false. It only acts when a stored conversation exists.
   const rewrite = options.rewriteCompaction === true
@@ -376,15 +408,28 @@ export function makeCompactionHook(ctx, options = {}) {
       const msgs = Array.isArray(event?.messages) ? event.messages : null
       const text = (m) => (typeof m === "string" ? m : Array.isArray(m?.content) ? m.content.map((c) => c?.text ?? "").join("") : "")
       const sizes = msgs ? msgs.map((m) => text(m).length) : []
+      // The transcript renderer prefixes each line with "[User]: " / "[Assistant]: " (and
+      // "[Assistant tool call]: ", "[Tool result]: "), not "## User" as an earlier guess had it.
+      const rendered = msgs
+        ? /^\[(User|Assistant)\]:/.test(text(msgs[0]) ?? "") ||
+          msgs.some((m) => /\[\d+ older exchanges? omitted\]/.test(text(m)))
+        : false
       log(
         `compaction session=${short} keys=${Object.keys(event ?? {}).join(",")} ` +
           `tools=${tools ? Object.keys(tools).length : "none"} messages=${msgs ? msgs.length : "none"} ` +
-          `chars=${msgs ? sizes.reduce((a, b) => a + b, 0) : 0} ` +
+          `chars=${msgs ? sizes.reduce((a, b) => a + b, 0) : 0} rendered=${rendered ? 1 : 0} ` +
           `roles=${msgs ? msgs.map((m) => String(m?.role ?? "?")).join("").slice(0, 40) : "-"}`,
       )
-      if (!rewrite || !msgs) return
       const snap = loadSnapshot(event.sessionID)
-      if (!snap) return log(`compaction session=${short} rewrite skipped: no snapshot`)
+      if (!snap) return log(`compaction session=${short} head skipped: no snapshot`)
+      // The same head the session's own turns went out under. Without this the compaction request
+      // starts with the live system block and shares nothing with the cached prefix.
+      const head = freezeHead(event, snap, { mode, freezeTools })
+      log(
+        `compaction session=${short} head restored=${head.restored} mismatch=${head.mismatched} ` +
+          `tools_added=${head.added.length} tools_dropped=${head.dropped} tools_readded=${head.readded}`,
+      )
+      if (!rewrite || !msgs) return
       let real = Array.isArray(snap.compactionMessages) ? snap.compactionMessages : null
       if (!real) {
         // A session that has not taken a turn in this process (a fresh fork, a resume) has nothing
@@ -411,10 +456,8 @@ export function makeCompactionHook(ctx, options = {}) {
       // hook (messages: [...le, wa.user(instruction)]). So substitute the real conversation and
       // append nothing — the harness adds its own instruction, which is what its reply validation
       // expects, and the prefix then matches the session's own tokens.
-      const looksRendered = msgs.some((m) => text(m).includes("## User") || text(m).includes("## Assistant"))
-      log(`compaction session=${short} rendered=${looksRendered ? 1 : 0} real=${real.length} event=${msgs.length}`)
+      log(`compaction session=${short} rendered=${rendered ? 1 : 0} real=${real.length} event=${msgs.length}`)
       event.messages = real
-      if (options.freezeTools !== false && snap.toolDefs) event.tools = clone(snap.toolDefs)
       log(`compaction session=${short} rewritten messages=${real.length} tools=${Object.keys(event.tools ?? {}).length}`)
     } catch (err) {
       try {

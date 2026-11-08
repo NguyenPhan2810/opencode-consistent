@@ -136,23 +136,47 @@ assert.ok(loadSnapshot("ses_wait"), "waited, then snapshotted")
 // --- 6. a compaction request is rebuilt from the real conversation ---------
 const { makeCompactionHook } = await import("./v2.js")
 let logged = ""
-const compact = makeCompactionHook(ctx, { rewriteCompaction: true, log: (line) => (logged = line) })
+const compact = makeCompactionHook(ctx, { mode: "all", rewriteCompaction: true, log: (line) => (logged += line + "\n") })
 const instruction = { role: "user", content: [{ type: "text", text: "summarize the conversation above" }] }
 const compactionEvent = {
   sessionID: "ses_v2",
   system: [envB],
   messages: [
-    { role: "user", content: [{ type: "text", text: "## User\nSummary of older exchanges (omitted)" }] },
+    // The transcript renderer's real markers, not "## User": every line starts "[User]: ".
+    { role: "user", content: [{ type: "text", text: "[User]: Summarize of older exchanges" }] },
     instruction,
   ],
-  tools: {}, // OpenCode sends tools: [] — the whole reason the prefix is lost
+  tools: {}, // the harness may send a squeezed tool block; the frozen one goes back
 }
 await compact(compactionEvent)
+assert.equal(systemText(compactionEvent.system).includes("Wed Sep 03 2026"), true, "the compaction request carries the frozen head")
+assert.equal(systemText(compactionEvent.system).includes("Thu Sep 04 2026"), false, "not the live one")
 assert.equal(compactionEvent.messages.length, 2, "the real conversation replaced the rendered transcript")
 assert.ok(JSON.stringify(compactionEvent.messages).includes("detail detail"), "the stored content is what goes out")
 assert.equal(JSON.stringify(compactionEvent.messages).includes("summarize the conversation above"), false, "no instruction is appended: the harness adds its own")
 assert.equal(Object.keys(compactionEvent.tools).sort().join(","), "bash,read", "the tool block is restored")
 assert.match(logged, /rewritten messages=2/, logged)
+assert.match(logged, /head restored=[1-9]/, logged)
+
+// --- 6b. an already-real compaction request only gets the head frozen ------
+let loggedReal = ""
+const compactReal = makeCompactionHook(ctx, { mode: "all", log: (line) => (loggedReal += line + "\n") })
+const realEvent = {
+  sessionID: "ses_v2",
+  system: [envB],
+  messages: [
+    { role: "user", content: [{ type: "text", text: "the real question" }] },
+    { role: "assistant", content: [{ type: "text", text: "the real answer" }] },
+  ],
+  tools: { read: { description: "read a file", input: { type: "object" } }, extra: { description: "late tool", input: {} } },
+}
+const realBefore = JSON.stringify(realEvent.messages)
+await compactReal(realEvent)
+assert.equal(JSON.stringify(realEvent.messages), realBefore, "real messages are left alone (no rewrite)")
+assert.equal(systemText(realEvent.system).includes("Wed Sep 03 2026"), true, "the head is frozen either way")
+assert.equal(Object.keys(realEvent.tools).sort().join(","), "bash,read", "a tool that appeared is dropped, one that went away is restored")
+assert.match(loggedReal, /rendered=0/, loggedReal)
+assert.match(loggedReal, /head restored=[1-9]/, loggedReal)
 
 // --- 7. cleanup disposes the registration --------------------------------
 await cleanup()
