@@ -1,10 +1,9 @@
 # opencode-consistent
 
-**Stop re-prefilling the whole conversation.** OpenCode rebuilds the system prompt every
-turn — date, AGENTS.md, skills, MCP prose, tool schemas. The moment any of it shifts, the
-engine's prefix cache misses and it recomputes the *entire* prompt: minutes of prefill on a
-large session, and it happens on `/compact` too. This plugin freezes the head, so the cache
-keeps hitting.
+**Stop paying for prefill.** OpenCode rebuilds the system prompt every turn — date,
+AGENTS.md, skills, MCP prose, tool schemas. The moment any of it shifts, the engine's prefix
+cache misses and it recomputes the *entire* prompt: minutes of prefill on a large session, and
+it happens on `/compact` too. This plugin freezes the head, so the cache keeps hitting.
 
 Measured on a two-node DeepSeek-V4.1 cluster: a **643,411-token `/compact` resumed 641,024
 tokens from cache** and computed 2,387 — instead of prefilling from zero. A tool appearing or
@@ -96,13 +95,26 @@ Upstream: [#32622](https://github.com/anomalyco/opencode/issues/32622) (date in 
 
 ## Install
 
-Put it **last** in the plugin list:
+Published on npm as `opencode-consistent`. V2 loads plugins by **directory**, so install it
+into your OpenCode config directory and point at the package directory:
+
+```bash
+cd ~/.config/opencode && npm i opencode-consistent
+```
 
 ```json
 {
-  "plugin": [
-    "opencode-consistent"
-  ]
+  "plugins": ["file:///home/<you>/.config/opencode/node_modules/opencode-consistent"]
+}
+```
+
+A clone works the same way — point at its directory (`file:///home/<you>/dev/opencode-consistent`).
+
+On V1, name the package instead and put it **last** in the list:
+
+```json
+{
+  "plugin": ["opencode-consistent"]
 }
 ```
 

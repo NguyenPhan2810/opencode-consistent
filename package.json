@@ -1,7 +1,7 @@
 {
   "name": "opencode-consistent",
-  "version": "0.6.1",
-  "description": "Stop full re-prefills: freeze OpenCode's system prefix and tool block so prompt/KV caches keep hitting — compaction included.",
+  "version": "0.6.2",
+  "description": "Stop paying for prefill: freeze OpenCode's system prompt and tool block so the prompt cache keeps hitting — /compact included.",
   "type": "module",
   "main": "./index.js",
   "exports": {
