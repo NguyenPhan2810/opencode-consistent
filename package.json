@@ -1,7 +1,7 @@
 {
   "name": "opencode-consistent",
-  "version": "0.6.0",
-  "description": "Freeze the OpenCode system prefix per session so prefix/KV caches actually hit (V1 + V2).",
+  "version": "0.6.1",
+  "description": "Stop full re-prefills: freeze OpenCode's system prefix and tool block so prompt/KV caches keep hitting — compaction included.",
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -21,11 +21,16 @@
   },
   "keywords": [
     "opencode",
-    "plugin",
-    "prefix-cache",
-    "vllm",
-    "kv-cache",
+    "opencode-plugin",
     "prompt-cache",
+    "prefix-cache",
+    "kv-cache",
+    "compaction",
+    "vllm",
+    "local-llm",
+    "llm-inference",
+    "caching",
+    "performance",
     "mcp"
   ],
   "author": "Nguyen Phan <nguyen@nguyenphan.org>",
