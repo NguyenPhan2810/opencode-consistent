@@ -5,7 +5,7 @@ AGENTS.md, skills, MCP prose, tool schemas. The moment any of it shifts, the eng
 cache misses and it recomputes the *entire* prompt: minutes of prefill on a large session, and
 it happens on `/compact` too. This plugin freezes the head, so the cache keeps hitting.
 
-Measured on a two-node DeepSeek-V4.1 cluster: a **643,411-token `/compact` resumed 641,024
+Measured on a DeepSeek-V4.1 cluster: a **643,411-token `/compact` resumed 641,024
 tokens from cache** and computed 2,387 — instead of prefilling from zero. A tool appearing or
 disappearing mid-session no longer costs the whole conversation either.
 
