@@ -1,6 +1,6 @@
 {
   "name": "opencode-consistent",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Stop paying for prefill: freeze OpenCode's system prompt and tool block so the prompt cache keeps hitting — /compact included.",
   "type": "module",
   "main": "./index.js",

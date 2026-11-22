@@ -170,6 +170,12 @@ OPENCODE_CONSISTENT_LOG=0 opencode   # disable
 
 Restart OpenCode after a plugin edit. Plugins load at process start.
 
+## Releasing
+
+Push a `v*` tag whose name matches `version` in `package.json`. The release
+workflow runs the tests, publishes to npm with provenance, and attaches the
+packed tarball to the GitHub release.
+
 ## License
 
 MIT
