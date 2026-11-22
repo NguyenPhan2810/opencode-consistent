@@ -1,0 +1,41 @@
+name: Bug report
+description: A wrong freeze, a missed cache, or a plugin that fails to load.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The plugin log is at `~/.local/state/opencode/opencode-consistent.log`.
+        For cache-related issues, include the last few lines of it.
+  - type: input
+    id: opencode-version
+    attributes:
+      label: OpenCode version
+      placeholder: 2.x or 1.18.x
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: opencode-consistent version
+      placeholder: 0.6.2
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Plugin config
+      description: The `plugins` (V2) or `plugin` (V1) entry.
+      render: json
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what the plugin did instead.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant log lines
+      render: text

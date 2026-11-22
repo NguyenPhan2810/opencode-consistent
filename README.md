@@ -1,5 +1,9 @@
 # opencode-consistent
 
+[![ci](https://github.com/NguyenPhan2810/opencode-consistent/actions/workflows/ci.yml/badge.svg)](https://github.com/NguyenPhan2810/opencode-consistent/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/opencode-consistent.svg)](https://www.npmjs.com/package/opencode-consistent)
+[![license](https://img.shields.io/npm/l/opencode-consistent.svg)](LICENSE)
+
 **Stop paying for prefill.** OpenCode rebuilds the system prompt every turn — date,
 AGENTS.md, skills, MCP prose, tool schemas. The moment any of it shifts, the engine's prefix
 cache misses and it recomputes the *entire* prompt: minutes of prefill on a large session, and
