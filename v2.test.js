@@ -216,6 +216,26 @@ assert.equal(Object.keys(realEvent.tools).sort().join(","), "bash,read", "a tool
 assert.match(loggedReal, /rendered=0/, loggedReal)
 assert.match(loggedReal, /head restored=[1-9]/, loggedReal)
 
+// --- 6c. a rendered compaction fetches the real conversation if none is stored ---
+let loggedFetch = ""
+const fetchCtx = {
+  ...ctx,
+  session: {
+    ...ctx.session,
+    context: async () => ({ data: [{ role: "user", content: [{ type: "text", text: "fetched real turn" }] }] }),
+  },
+}
+const compactFetch = makeCompactionHook(fetchCtx, { mode: "all", rewriteCompaction: true, log: (line) => (loggedFetch += line + "\n") })
+const fetchEvent = {
+  sessionID: "ses_cap",
+  system: [envA],
+  messages: [{ role: "user", content: [{ type: "text", text: "[User]: rendered transcript" }] }],
+  tools: {},
+}
+await compactFetch(fetchEvent)
+assert.ok(JSON.stringify(fetchEvent.messages).includes("fetched real turn"), "the server context is used when nothing was stored")
+assert.match(loggedFetch, /context fetched from the server/, loggedFetch)
+
 // --- 7. a zero MCP wait still polls once, then does not block -------------
 const waitCtx = { mcp: { list: async () => ({ data: [{ name: "x", status: { status: "connected" } }] }) } }
 const waitedZero = await waitForMcp(waitCtx, { timeoutMs: 0 })
