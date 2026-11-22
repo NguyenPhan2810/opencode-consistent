@@ -183,9 +183,11 @@ async function mcpStatus(ctx) {
 export async function waitForMcp(ctx, { timeoutMs = 5000, intervalMs = 150, sleep } = {}) {
   const nap = sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
   const started = Date.now()
-  if (!ctx?.mcp?.list || timeoutMs <= 0) return { ok: true, elapsed: 0, statuses: {} }
+  if (!ctx?.mcp?.list) return { ok: true, elapsed: 0, statuses: {} }
+  // A zero budget still polls once: it reports the current state without waiting.
   let statuses = await mcpStatus(ctx)
   if (settled(statuses)) return { ok: true, elapsed: Date.now() - started, statuses }
+  if (timeoutMs <= 0) return { ok: false, elapsed: Date.now() - started, statuses }
   while (Date.now() - started < timeoutMs) {
     await nap(intervalMs)
     statuses = await mcpStatus(ctx)
@@ -242,6 +244,7 @@ export function freezeHead(event, snap, options = {}) {
   const removed = [...known].filter((id) => !(tools && id in tools))
   let dropped = 0
   let readded = 0
+  let changed = 0
   if (tools && freezeTools) {
     if (added.length) {
       for (const id of added) delete tools[id]
@@ -258,8 +261,38 @@ export function freezeHead(event, snap, options = {}) {
         readded += 1
       }
     }
+    // A tool that stays but whose description or schema changes (an MCP server restarting
+    // with a new shape, a preset reloading) moves the same block. Restore the stored fields
+    // in place, keeping the live handler and any non-JSON fields on the entry.
+    if (snap.toolDefs && typeof snap.toolDefs === "object") {
+      for (const id of toolIds(tools)) {
+        const frozen = snap.toolDefs[id]
+        const live = tools[id]
+        if (!frozen || !live) continue
+        const descriptionChanged = String(live.description ?? "") !== String(frozen.description ?? "")
+        const inputChanged = JSON.stringify(live.input ?? {}) !== JSON.stringify(frozen.input ?? {})
+        if (!descriptionChanged && !inputChanged) continue
+        if (typeof live === "object" && live !== null) {
+          live.description = frozen.description
+          live.input = clone(frozen.input ?? {})
+        } else {
+          tools[id] = clone(frozen)
+        }
+        changed += 1
+      }
+      // Object key order is part of the serialized block. Rebuild it in the snapshot's
+      // order so a tool that was removed and put back does not move to the end.
+      const order = Object.keys(snap.toolDefs)
+      if (order.length) {
+        const rebuilt = {}
+        for (const id of order) if (id in tools) rebuilt[id] = tools[id]
+        for (const id of Object.keys(tools)) if (!(id in rebuilt)) rebuilt[id] = tools[id]
+        for (const id of Object.keys(tools)) delete tools[id]
+        Object.assign(tools, rebuilt)
+      }
+    }
   }
-  return { restored, mismatched, known, added, removed, dropped, readded }
+  return { restored, mismatched, known, added, removed, dropped, readded, changed }
 }
 
 // ---------------------------------------------------------------- the hook
@@ -289,6 +322,15 @@ export function makeContextHook(ctx, options = {}) {
     const tools = event?.tools && typeof event.tools === "object" ? event.tools : {}
     const short = String(sessionID).slice(0, 12)
 
+    // Title generation and other side calls carry no env block, so they have no
+    // date line. Snapshotting one as the session's first turn would freeze the
+    // wrong head; the V1 plugin ignored them for the same reason.
+    const date = dateOf(parts)
+    if (!date) {
+      log(`skip v2 session=${short} reason=no-date parts=${parts.length}`)
+      return
+    }
+
     const text = systemText(parts)
     const sha = digestHex(text)
     const partsNow = partDigests(parts.map(partText))
@@ -301,7 +343,6 @@ export function makeContextHook(ctx, options = {}) {
         .filter(([, v]) => statusOf(v) === "connected")
         .map(([k]) => k)
         .join(",")
-      const date = dateOf(parts)
       saveSnapshot(sessionID, {
         v: 2,
         savedAt: Date.now(),
@@ -327,7 +368,7 @@ export function makeContextHook(ctx, options = {}) {
 
     const vsSnap = changedPartKeys(snap.parts, partsNow)
     const vsLast = changedPartKeys(snap.lastParts ?? snap.parts, partsNow)
-    const { restored, mismatched, known, added, removed, dropped, readded } = freezeHead(event, snap, {
+    const { restored, mismatched, known, added, removed, dropped, readded, changed } = freezeHead(event, snap, {
       mode,
       freezeTools,
     })
@@ -353,7 +394,7 @@ export function makeContextHook(ctx, options = {}) {
     })
 
     log(
-      `restore v2 session=${short} keys=${Object.keys(event ?? {}).join(",")} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} msgs=${msgs ? msgs.length : 0} msgs_chars=${msgsChars} kept=${compactionMessages ? 1 : 0} ` +
+      `restore v2 session=${short} keys=${Object.keys(event ?? {}).join(",")} mode=${mode} date=${(snap.date ?? "none").replaceAll(" ", "_")} sha=${sha} snap=${snap.sha} prev=${snap.lastSha ?? "-"} vs_snap=${vsSnap.join(",") || "-"} vs_last=${vsLast.join(",") || "-"} parts=${parts.length} bytes=${text.length} restored=${restored} mismatch=${mismatched} tools=${known.size} tools_added=${added.length} tools_dropped=${dropped} tools_removed=${removed.length} tools_readded=${readded} tools_defs_restored=${changed} tools_changed=${toolsSha !== snap.toolsSha ? 1 : 0} msgs=${msgs ? msgs.length : 0} msgs_chars=${msgsChars} kept=${compactionMessages ? 1 : 0} ` +
         Object.keys(partsNow)
           .map((k) => `${k}=${partsNow[k]}`)
           .join(" "),
@@ -427,9 +468,13 @@ export function makeCompactionHook(ctx, options = {}) {
       const head = freezeHead(event, snap, { mode, freezeTools })
       log(
         `compaction session=${short} head restored=${head.restored} mismatch=${head.mismatched} ` +
-          `tools_added=${head.added.length} tools_dropped=${head.dropped} tools_readded=${head.readded}`,
+          `tools_added=${head.added.length} tools_dropped=${head.dropped} tools_readded=${head.readded} ` +
+          `tools_defs_restored=${head.changed}`,
       )
-      if (!rewrite || !msgs) return
+      // Only a rendered transcript needs the real conversation substituted; when the
+      // request already carries the real messages, replacing them would drop anything
+      // that arrived after the last context hook.
+      if (!rewrite || !msgs || !rendered) return
       let real = Array.isArray(snap.compactionMessages) ? snap.compactionMessages : null
       if (!real) {
         // A session that has not taken a turn in this process (a fresh fork, a resume) has nothing

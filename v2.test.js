@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import plugin from "./index.js"
-import { loadSnapshot, forgetSnapshot, systemText } from "./v2.js"
+import { loadSnapshot, forgetSnapshot, systemText, waitForMcp } from "./v2.js"
 
 process.env.OPENCODE_CONSISTENT_LOG = "0"
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "oc-consistent-v2-"))
@@ -95,6 +95,44 @@ assert.ok("bash" in third.tools, "a tool that went away is restored from the sna
 assert.deepEqual(third.tools.bash, toolsA.bash, "restored definition is byte-identical")
 assert.equal(Object.keys(third.tools).sort().join(","), "bash,read", "the tool block is exactly the snapshot's")
 
+// --- 1c. a tool whose definition changed is restored, in snapshot order ----
+const changedDefs = {
+  bash: { description: "run a command", input: { type: "object", properties: { cmd: { type: "string" } } } },
+  read: { description: "CHANGED read", input: { type: "object" } },
+}
+const fourth = { sessionID: "ses_v2", system: [envB, agentsA, skillsB], messages: [], tools: { ...changedDefs } }
+await ctx.hooks.context(fourth)
+assert.deepEqual(fourth.tools.read, toolsA.read, "a changed description is restored from the snapshot")
+assert.deepEqual(fourth.tools.bash, toolsA.bash, "a changed input schema is restored from the snapshot")
+assert.equal(Object.keys(fourth.tools).join(","), "read,bash", "the tool order is rebuilt in the snapshot's order")
+
+// --- 1d. a call without the env date (title generation) is ignored --------
+const titleCall = {
+  sessionID: "ses_title",
+  system: [{ type: "text", text: "Write a short title for this conversation" }],
+  messages: [],
+  tools: {},
+}
+await ctx.hooks.context(titleCall)
+assert.equal(loadSnapshot("ses_title"), null, "a no-date call must not become the session snapshot")
+const titleReal = { sessionID: "ses_title", system: [envA], messages: [], tools: {} }
+await ctx.hooks.context(titleReal)
+assert.ok(loadSnapshot("ses_title"), "the first real turn still snapshots")
+
+// --- 1e. compactionMaxMb caps the stored conversation ---------------------
+const capCtx = fakeCtx({ statuses: {}, options: { compactionMaxMb: 0.001 } })
+await plugin.setup(capCtx)
+await capCtx.hooks.context({ sessionID: "ses_cap", system: [envA], messages: [], tools: {} })
+await capCtx.hooks.context({
+  sessionID: "ses_cap",
+  system: [envA],
+  messages: [{ role: "user", content: [{ type: "text", text: "x".repeat(4000) }] }],
+  tools: {},
+})
+const capSnap = loadSnapshot("ses_cap")
+assert.equal(capSnap.compactionMessages, null, "over compactionMaxMb, the conversation is not kept")
+assert.ok(capSnap.compactionChars > 1024, "the size is still recorded")
+
 // --- 2. a fresh process (service restart) still restores from disk ---------
 const ctx2 = fakeCtx({ statuses: { tmux: { status: "connected" } } })
 await plugin.setup(ctx2)
@@ -160,7 +198,7 @@ assert.match(logged, /head restored=[1-9]/, logged)
 
 // --- 6b. an already-real compaction request only gets the head frozen ------
 let loggedReal = ""
-const compactReal = makeCompactionHook(ctx, { mode: "all", log: (line) => (loggedReal += line + "\n") })
+const compactReal = makeCompactionHook(ctx, { mode: "all", rewriteCompaction: true, log: (line) => (loggedReal += line + "\n") })
 const realEvent = {
   sessionID: "ses_v2",
   system: [envB],
@@ -178,7 +216,13 @@ assert.equal(Object.keys(realEvent.tools).sort().join(","), "bash,read", "a tool
 assert.match(loggedReal, /rendered=0/, loggedReal)
 assert.match(loggedReal, /head restored=[1-9]/, loggedReal)
 
-// --- 7. cleanup disposes the registration --------------------------------
+// --- 7. a zero MCP wait still polls once, then does not block -------------
+const waitCtx = { mcp: { list: async () => ({ data: [{ name: "x", status: { status: "connected" } }] }) } }
+const waitedZero = await waitForMcp(waitCtx, { timeoutMs: 0 })
+assert.equal(waitedZero.ok, true, "a zero budget polls once and sees the connected server")
+assert.equal(waitedZero.statuses.x.status, "connected", "the poll result is returned")
+
+// --- 8. cleanup disposes the registration --------------------------------
 await cleanup()
 assert.equal(ctx.hooks.context, undefined, "cleanup disposes the hook")
 

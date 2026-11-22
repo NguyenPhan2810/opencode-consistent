@@ -182,6 +182,7 @@ export default {
         opts.mcpWaitIntervalMs !== undefined && Number.isFinite(Number(opts.mcpWaitIntervalMs))
           ? Math.max(0, Number(opts.mcpWaitIntervalMs))
           : undefined,
+      compactionMaxMb: opts.compactionMaxMb,
       log: logRaw,
     })
     const registration = await ctx.session.hook("context", (event) => hook(event))

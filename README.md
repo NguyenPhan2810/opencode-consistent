@@ -41,7 +41,7 @@ Options (plugin object form or env):
 | Option | Default | Meaning |
 |---|---|---|
 | `freeze` | `all` | `all` = env + AGENTS + skills + MCP prose frozen; `date` = old behaviour, only `Today's date` pinned |
-| `freezeTools` | `true` | hold the tool block still in **both** directions: a tool that appears *after* the snapshot is dropped, and one that disappears is put back from the snapshot's stored definitions. The tool block sits ahead of the conversation, so either change moves the head; a call to a tool that has gone away now fails at the tool instead of costing a full re-prefill. Snapshots made before 0.6.0 have ids only, so a removal is a no-op for them until the next session. |
+| `freezeTools` | `true` | hold the tool block still: a tool that appears *after* the snapshot is dropped, one that disappears is put back from the snapshot's stored definitions, and one whose description or schema changes is restored to the stored shape. The block keeps the snapshot's order too. A call to a tool that has gone away now fails at the tool instead of costing a full re-prefill. Snapshots made before 0.6.0 have ids only, so definition changes and removals are a no-op for them until the next session. |
 | `mcpWaitMs` | `5000` | wait for MCP servers to settle before the first snapshot (only the first turn) |
 
 ### Compaction
@@ -58,7 +58,7 @@ messages since the last turn are computed and the summary is decoded.
 Measured on a real manual compaction (2026-11-08, `ses_e44304e3`): `input` 3,234, `cache.read`
 137,216 — identical to the preceding normal turn (`input` 2,039, `cache.read` 137,216) — against
 579,597 → 0 before the fix. The plugin log line is `compaction session=… head restored=… mismatch=…
-tools_added=… tools_dropped=… tools_readded=…`.
+tools_added=… tools_dropped=… tools_readded=… tools_defs_restored=…`.
 
 The conversation itself is only re-rendered upstream when it does **not** fit the model window; when
 that happens the request carries a transcript, not the messages. `rewriteCompaction` (default `false`)
@@ -163,6 +163,10 @@ Each system-transform line has:
 - per-bucket digests: `env=` `agents=` `skills=` `mcp=` `other=` (`-` if that bucket was empty)
 
 `sha` is allowed to move when AGENTS.md, skills, or MCP prose change; the date field stays pinned. `vs_snap=mcp` on an overnight resume means the MCP instruction block changed, not the calendar.
+
+When the runtime assembles the head as one merged system part (the usual V2
+shape), the buckets collapse into `env`/`other`; the digest still shows that the
+head moved, but it cannot name AGENTS.md, skills, and MCP prose separately.
 
 ```bash
 OPENCODE_CONSISTENT_LOG=0 opencode   # disable
