@@ -15,6 +15,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          registry-url: "https://registry.npmjs.org"
       - run: npm test
       - run: test "$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME#v}"
       - id: npm
