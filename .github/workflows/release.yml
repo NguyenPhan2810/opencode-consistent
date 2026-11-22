@@ -40,6 +40,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - if: steps.gh.outputs.exists == 'false'
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" ./opencode-consistent-*.tgz
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          {
+            if [ -n "$prev" ]; then
+              git log --pretty='- %s' "$prev..$GITHUB_REF_NAME"
+              echo
+              echo "**Full changelog:** https://github.com/${GITHUB_REPOSITORY}/compare/${prev}...${GITHUB_REF_NAME}"
+            else
+              git log --pretty='- %s' "$GITHUB_REF_NAME"
+            fi
+            echo
+            echo "Install: \`npm i opencode-consistent@${GITHUB_REF_NAME#v}\`"
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md ./opencode-consistent-*.tgz
         env:
           GH_TOKEN: ${{ github.token }}
